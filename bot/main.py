@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -19,6 +20,8 @@ from verify import verify_init_data
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("zakas-bot")
+
+WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -129,14 +132,15 @@ async def handle_order(request: web.Request) -> web.Response:
 
 
 async def handle_index(request: web.Request) -> web.FileResponse:
-    return web.FileResponse("../webapp/index.html")
+    return web.FileResponse(WEBAPP_DIR / "index.html")
 
 
 def build_app() -> web.Application:
     app = web.Application()
+    app.router.add_get("/", handle_index)
     app.router.add_get("/api/products", handle_products)
     app.router.add_post("/api/order", handle_order)
-    app.router.add_static("/", path="../webapp", name="webapp", show_index=False)
+    app.router.add_static("/", path=WEBAPP_DIR, name="webapp", show_index=False)
     return app
 
 
