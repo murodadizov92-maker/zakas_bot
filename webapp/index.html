@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Buyurtma berish</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="closed-banner" class="closed-banner hidden">
+  ⏰ Hozir buyurtma qabul qilish vaqti emas (har kuni <span id="open-time"></span> dan <span id="cutoff-time"></span> gacha).
+</div>
+
+<div class="search-bar">
+  <input id="search" type="text" placeholder="Mahsulot qidirish...">
+</div>
+
+<div id="categories" class="categories"></div>
+
+<div id="products" class="products"></div>
+
+<div id="cart-bar" class="cart-bar hidden">
+  <div class="cart-summary">
+    <span id="cart-count">0</span> mahsulot tanlandi
+  </div>
+  <button id="review-btn" class="btn-primary">Buyurtmani ko'rish →</button>
+</div>
+
+<!-- Review / confirm screen -->
+<div id="review-screen" class="review-screen hidden">
+  <div class="review-header">
+    <button id="back-btn" class="btn-icon">←</button>
+    <h2>Buyurtma</h2>
+  </div>
+  <div id="review-list" class="review-list"></div>
+  <div class="review-total" id="review-total"></div>
+  <button id="submit-btn" class="btn-primary btn-submit">✅ Tasdiqlash va yuborish</button>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--tg-theme-bg-color, #f4f4f5);
+  color: var(--tg-theme-text-color, #111);
+  padding-bottom: 90px;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- search ---------- */
+.search-bar {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--tg-theme-bg-color, #f4f4f5);
+  padding: 10px 12px 6px;
+}
+.search-bar input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--tg-theme-hint-color, #ccc);
+  background: var(--tg-theme-secondary-bg-color, #fff);
+  color: inherit;
+  font-size: 15px;
+}
+
+/* ---------- categories ---------- */
+.categories {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+.categories::-webkit-scrollbar { display: none; }
+.cat-chip {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border-radius: 16px;
+  background: var(--tg-theme-secondary-bg-color, #e9e9eb);
+  color: var(--tg-theme-text-color, #111);
+  font-size: 14px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.cat-chip.active {
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #fff);
+}
+
+/* ---------- products ---------- */
+.products { padding: 4px 12px 12px; }
+.cat-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tg-theme-hint-color, #888);
+  text-transform: uppercase;
+  margin: 14px 4px 6px;
+}
+.product-row {
+  background: var(--tg-theme-secondary-bg-color, #fff);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.product-name { font-size: 15px; font-weight: 500; margin-bottom: 2px; }
+.product-price { font-size: 13px; color: var(--tg-theme-hint-color, #888); margin-bottom: 8px; }
+.qty-row { display: flex; align-items: center; gap: 10px; }
+.unit-toggle {
+  display: flex;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--tg-theme-hint-color, #ccc);
+}
+.unit-toggle button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.unit-toggle button.active {
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #fff);
+}
+.qty-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--tg-theme-hint-color, #ccc);
+  background: var(--tg-theme-bg-color, #f4f4f5);
+  color: inherit;
+  font-size: 15px;
+}
+.product-row.filled { outline: 2px solid var(--tg-theme-button-color, #2481cc); }
+
+/* ---------- cart bar ---------- */
+.cart-bar {
+  position: fixed; bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--tg-theme-secondary-bg-color, #fff);
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.08);
+}
+.cart-summary { font-size: 14px; color: var(--tg-theme-hint-color, #888); }
+
+.btn-primary {
+  background: var(--tg-theme-button-color, #2481cc);
+  color: var(--tg-theme-button-text-color, #fff);
+  border: none;
+  border-radius: 10px;
+  padding: 11px 18px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- closed banner ---------- */
+.closed-banner {
+  background: #ffe5e5;
+  color: #a30000;
+  padding: 10px 14px;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---------- review screen ---------- */
+.review-screen {
+  position: fixed; inset: 0;
+  background: var(--tg-theme-bg-color, #f4f4f5);
+  padding: 12px;
+  overflow-y: auto;
+  z-index: 20;
+}
+.review-header {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.btn-icon {
+  background: none; border: none; font-size: 22px; color: inherit;
+}
+.review-list { margin-bottom: 16px; }
+.review-item {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--tg-theme-secondary-bg-color, #fff);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.review-item .remove-btn {
+  background: none; border: none; color: #cc3333; font-size: 18px; padding: 0 6px;
+}
+.review-total {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.btn-submit { width: 100%; padding: 14px; font-size: 16px; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  z-index: 30;
+}
