@@ -205,7 +205,8 @@ el("submit-btn").onclick = async () => {
 
   // vaqtinchalik diagnostika
   const initData = getInitData();
-  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"} hashLen=${location.hash.length} fallbackLen=${initData.length}`;
+  const rawHash = location.hash.slice(0, 120);
+  const dbg = `initLen=${(tg.initData||"").length} hashLen=${location.hash.length} fallbackLen=${initData.length} raw=${rawHash}`;
   console.log("DEBUG", dbg);
   if (!initData) {
     showToast("Diag: " + dbg);
