@@ -2,6 +2,15 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+function getInitData() {
+  if (tg.initData) return tg.initData;
+  // Zaxira usul: ba'zi mijozlarda tg.initData bo'sh qaytadi,
+  // lekin Telegram ma'lumotni URL hash'ga (#tgWebAppData=...) qo'shib yuboradi.
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  const params = new URLSearchParams(hash);
+  return params.get("tgWebAppData") || "";
+}
+
 let CATALOG = {};
 let ORDER_OPEN = true;
 let ACTIVE_CATEGORY = null;
@@ -195,9 +204,10 @@ el("submit-btn").onclick = async () => {
   if (items.length === 0) return;
 
   // vaqtinchalik diagnostika
-  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"} hashLen=${location.hash.length} searchLen=${location.search.length}`;
+  const initData = getInitData();
+  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"} hashLen=${location.hash.length} fallbackLen=${initData.length}`;
   console.log("DEBUG", dbg);
-  if (!tg.initData) {
+  if (!initData) {
     showToast("Diag: " + dbg);
     return;
   }
@@ -209,7 +219,7 @@ el("submit-btn").onclick = async () => {
     const res = await fetch("/api/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: tg.initData, items }),
+      body: JSON.stringify({ initData: initData, items }),
     });
     const data = await res.json();
 
