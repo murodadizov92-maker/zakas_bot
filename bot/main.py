@@ -82,7 +82,10 @@ async def handle_order(request: web.Request) -> web.Response:
         user_data = verify_init_data(init_data)
         if user_data is None:
             log.warning("auth_failed: initData=%r", init_data[:200])
-            return web.json_response({"ok": False, "error": "auth_failed"}, status=401)
+            return web.json_response(
+                {"ok": False, "error": "auth_failed", "detail": f"initData_len={len(init_data)}"},
+                status=401,
+            )
 
         if not is_order_time_open():
             return web.json_response({"ok": False, "error": "closed"}, status=403)
