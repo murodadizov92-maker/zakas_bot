@@ -5,13 +5,13 @@ from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram import Bot, Dispatcher
+from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message,
     WebAppInfo,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
+    MenuButtonWebApp,
+    ReplyKeyboardRemove,
 )
 
 from config import BOT_TOKEN, ADMIN_CHAT_ID, WEBAPP_URL, PORT
@@ -32,28 +32,20 @@ PRODUCTS_BY_ID = {p["id"]: p for cat in CATALOG.values() for p in cat}
 
 # ---------------------------------------------------------------- Telegram bot
 
-def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🛒 Buyurtma berish", web_app=WebAppInfo(url=WEBAPP_URL))]
-        ],
-        resize_keyboard=True,
-    )
-
-
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
         f"Assalomu alaykum, {message.from_user.full_name}!\n\n"
-        f"Buyurtma berish uchun pastdagi tugmani bosing.\n"
+        f"Buyurtma berish uchun pastdagi (chap tomondagi) \"Buyurtma\" tugmasini bosing.\n"
         f"⏰ Buyurtmalar har kuni soat {open_str()} dan {cutoff_str()} gacha qabul qilinadi.",
-        reply_markup=main_keyboard(),
+        # eski klaviatura (agar avvalroq yuborilgan bo'lsa) olib tashlanadi
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
-@dp.message(F.text == "🛒 Buyurtma berish")
-async def reopen(message: Message):
-    await message.answer("Buyurtma oynasi:", reply_markup=main_keyboard())
+@dp.message(Command("menu"))
+async def show_menu_hint(message: Message):
+    await message.answer("Chap tomondagi \"Buyurtma\" tugmasini bosing.")
 
 
 # ---------------------------------------------------------------- HTTP API
@@ -170,6 +162,12 @@ async def main():
     log.info(f"HTTP server ishga tushdi: 0.0.0.0:{PORT}")
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Botning doimiy "Menu" tugmasini Mini App ochadigan qilib sozlaymiz
+    await bot.set_chat_menu_button(
+        menu_button=MenuButtonWebApp(text="Buyurtma", web_app=WebAppInfo(url=WEBAPP_URL))
+    )
+
     log.info("Bot polling boshlandi")
     await dp.start_polling(bot)
 
