@@ -194,6 +194,14 @@ el("submit-btn").onclick = async () => {
   }));
   if (items.length === 0) return;
 
+  // vaqtinchalik diagnostika
+  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"}`;
+  console.log("DEBUG", dbg);
+  if (!tg.initData) {
+    showToast("Diag: " + dbg);
+    return;
+  }
+
   el("submit-btn").disabled = true;
   el("submit-btn").textContent = "Yuborilmoqda...";
 
