@@ -147,7 +147,7 @@ function showToast(msg) {
   const t = el("toast");
   t.textContent = msg;
   t.classList.remove("hidden");
-  setTimeout(() => t.classList.add("hidden"), 5000);
+  setTimeout(() => t.classList.add("hidden"), 3000);
 }
 
 // ---------- review screen ----------
@@ -203,13 +203,9 @@ el("submit-btn").onclick = async () => {
   }));
   if (items.length === 0) return;
 
-  // vaqtinchalik diagnostika
   const initData = getInitData();
-  const rawHash = location.hash.slice(0, 120);
-  const dbg = `initLen=${(tg.initData||"").length} hashLen=${location.hash.length} fallbackLen=${initData.length} raw=${rawHash}`;
-  console.log("DEBUG", dbg);
   if (!initData) {
-    showToast("Diag: " + dbg);
+    showToast("Xatolik: Telegram ma'lumotlarini o'qib bo'lmadi. Telegram ilovasini yangilab, qayta urinib ko'ring.");
     return;
   }
 
@@ -231,7 +227,7 @@ el("submit-btn").onclick = async () => {
     } else if (data.error === "closed") {
       showToast("⏰ Buyurtma vaqti tugagan");
     } else {
-      showToast("Xatolik: " + (data.error || res.status) + (data.detail ? " — " + data.detail : ""));
+      showToast("Xatolik yuz berdi, qayta urinib ko'ring" + (data.error ? " (" + data.error + ")" : ""));
     }
   } catch (e) {
     showToast("Tarmoq xatoligi");
