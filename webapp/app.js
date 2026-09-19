@@ -195,7 +195,7 @@ el("submit-btn").onclick = async () => {
   if (items.length === 0) return;
 
   // vaqtinchalik diagnostika
-  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"}`;
+  const dbg = `platform=${tg.platform} ver=${tg.version} initLen=${(tg.initData||"").length} unsafeUserId=${tg.initDataUnsafe?.user?.id || "yoq"} hashLen=${location.hash.length} searchLen=${location.search.length}`;
   console.log("DEBUG", dbg);
   if (!tg.initData) {
     showToast("Diag: " + dbg);
