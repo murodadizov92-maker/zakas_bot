@@ -15,8 +15,10 @@ def verify_init_data(init_data: str) -> dict | None:
     if not init_data:
         return None
 
+    init_data = init_data.strip()
+
     try:
-        pairs = dict(parse_qsl(init_data, strict_parsing=True))
+        pairs = dict(parse_qsl(init_data, strict_parsing=False))
     except ValueError:
         return None
 
