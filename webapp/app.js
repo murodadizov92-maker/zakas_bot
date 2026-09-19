@@ -138,7 +138,7 @@ function showToast(msg) {
   const t = el("toast");
   t.textContent = msg;
   t.classList.remove("hidden");
-  setTimeout(() => t.classList.add("hidden"), 2500);
+  setTimeout(() => t.classList.add("hidden"), 5000);
 }
 
 // ---------- review screen ----------
@@ -212,7 +212,7 @@ el("submit-btn").onclick = async () => {
     } else if (data.error === "closed") {
       showToast("⏰ Buyurtma vaqti tugagan");
     } else {
-      showToast("Xatolik yuz berdi, qayta urinib ko'ring");
+      showToast("Xatolik: " + (data.error || res.status) + (data.detail ? " — " + data.detail : ""));
     }
   } catch (e) {
     showToast("Tarmoq xatoligi");
