@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
 # Buyurtmalar shu chatga (admin) yuboriladi.
 # O'z shaxsiy chat ID'ingizni olish uchun @userinfobot ga /start yozing.
