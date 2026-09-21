@@ -2,15 +2,6 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
-function getInitData() {
-  if (tg.initData) return tg.initData;
-  // Zaxira usul: ba'zi mijozlarda tg.initData bo'sh qaytadi,
-  // lekin Telegram ma'lumotni URL hash'ga (#tgWebAppData=...) qo'shib yuboradi.
-  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
-  const params = new URLSearchParams(hash);
-  return params.get("tgWebAppData") || "";
-}
-
 let CATALOG = {};
 let ORDER_OPEN = true;
 let ACTIVE_CATEGORY = null;
@@ -34,8 +25,15 @@ async function loadProducts() {
 
   const categories = Object.keys(CATALOG);
   ACTIVE_CATEGORY = categories[0];
+  updateSearchPlaceholder();
   renderCategories(categories);
   renderProducts();
+}
+
+function updateSearchPlaceholder() {
+  el("search").placeholder = ACTIVE_CATEGORY
+    ? `${ACTIVE_CATEGORY} ichidan qidirish...`
+    : "Mahsulot qidirish...";
 }
 
 function renderCategories(categories) {
@@ -49,6 +47,7 @@ function renderCategories(categories) {
       ACTIVE_CATEGORY = cat;
       document.querySelectorAll(".cat-chip").forEach((c) => c.classList.remove("active"));
       chip.classList.add("active");
+      updateSearchPlaceholder();
       renderProducts();
     };
     wrap.appendChild(chip);
@@ -60,23 +59,26 @@ function renderProducts() {
   container.innerHTML = "";
   const query = el("search").value.trim().toLowerCase();
 
-  const catsToShow = [ACTIVE_CATEGORY];
-    ? Object.keys(CATALOG)
-    : [ACTIVE_CATEGORY];
+  // Qidiruv faqat tanlangan kategoriya ichida ishlaydi
+  const items = (CATALOG[ACTIVE_CATEGORY] || []).filter(
+    (p) => !query || p.name.toLowerCase().includes(query)
+  );
 
-  catsToShow.forEach((cat) => {
-    const items = CATALOG[cat].filter((p) =>
-      !query || p.name.toLowerCase().includes(query)
-    );
-    if (items.length === 0) return;
+  const title = document.createElement("div");
+  title.className = "cat-group-title";
+  title.textContent = ACTIVE_CATEGORY;
+  container.appendChild(title);
 
-    const title = document.createElement("div");
-    title.className = "cat-group-title";
-    title.textContent = cat;
-    container.appendChild(title);
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "product-price";
+    empty.style.padding = "12px 4px";
+    empty.textContent = "Bu kategoriyada topilmadi";
+    container.appendChild(empty);
+    return;
+  }
 
-    items.forEach((p) => container.appendChild(renderProductRow(p)));
-  });
+  items.forEach((p) => container.appendChild(renderProductRow(p)));
 }
 
 function renderProductRow(product) {
@@ -147,7 +149,7 @@ function showToast(msg) {
   const t = el("toast");
   t.textContent = msg;
   t.classList.remove("hidden");
-  setTimeout(() => t.classList.add("hidden"), 3000);
+  setTimeout(() => t.classList.add("hidden"), 2500);
 }
 
 // ---------- review screen ----------
@@ -170,7 +172,11 @@ function renderReview() {
       renderReview();
       updateCartBar();
       const domRow = el(`row-${id}`);
-      if (domRow) domRow.classList.remove("filled");
+      if (domRow) {
+        domRow.classList.remove("filled");
+        const input = domRow.querySelector(".qty-input");
+        if (input) input.value = "";
+      }
     };
     list.appendChild(row);
   });
@@ -203,12 +209,6 @@ el("submit-btn").onclick = async () => {
   }));
   if (items.length === 0) return;
 
-  const initData = getInitData();
-  if (!initData) {
-    showToast("Xatolik: Telegram ma'lumotlarini o'qib bo'lmadi. Telegram ilovasini yangilab, qayta urinib ko'ring.");
-    return;
-  }
-
   el("submit-btn").disabled = true;
   el("submit-btn").textContent = "Yuborilmoqda...";
 
@@ -216,7 +216,7 @@ el("submit-btn").onclick = async () => {
     const res = await fetch("/api/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: initData, items }),
+      body: JSON.stringify({ initData: tg.initData, items }),
     });
     const data = await res.json();
 
@@ -227,7 +227,7 @@ el("submit-btn").onclick = async () => {
     } else if (data.error === "closed") {
       showToast("⏰ Buyurtma vaqti tugagan");
     } else {
-      showToast("Xatolik yuz berdi, qayta urinib ko'ring" + (data.error ? " (" + data.error + ")" : ""));
+      showToast("Xatolik yuz berdi, qayta urinib ko'ring");
     }
   } catch (e) {
     showToast("Tarmoq xatoligi");
