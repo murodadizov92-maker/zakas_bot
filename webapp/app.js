@@ -60,7 +60,7 @@ function renderProducts() {
   container.innerHTML = "";
   const query = el("search").value.trim().toLowerCase();
 
-  const catsToShow = query
+  const catsToShow = [ACTIVE_CATEGORY];
     ? Object.keys(CATALOG)
     : [ACTIVE_CATEGORY];
 
