@@ -5,12 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Buyurtma berish</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <div id="closed-banner" class="closed-banner hidden">
   ⏰ Hozir buyurtma qabul qilish vaqti emas (har kuni <span id="open-time"></span> dan <span id="cutoff-time"></span> gacha).
+</div>
+
+<div id="web-info" class="web-info hidden">
+  <div class="web-info-title">🌐 Buyurtma berish uchun ma'lumotlaringizni kiriting:</div>
+  <input id="web-name" type="text" placeholder="Ismingiz">
+  <input id="web-phone" type="tel" placeholder="Telefon raqamingiz (+998...)">
 </div>
 
 <div class="search-bar">
@@ -41,6 +47,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js"></script>
 </body>
 </html>
