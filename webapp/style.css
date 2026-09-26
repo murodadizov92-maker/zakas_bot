@@ -25,6 +25,28 @@ body {
   font-size: 15px;
 }
 
+/* ---------- web fallback (non-Telegram) ---------- */
+.web-info {
+  padding: 10px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.web-info-title {
+  font-size: 13px;
+  color: var(--tg-theme-hint-color, #888);
+  margin-bottom: 2px;
+}
+.web-info input {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--tg-theme-hint-color, #ccc);
+  background: var(--tg-theme-secondary-bg-color, #fff);
+  color: inherit;
+  font-size: 15px;
+}
+
 /* ---------- categories ---------- */
 .categories {
   display: flex;
