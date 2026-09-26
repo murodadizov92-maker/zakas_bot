@@ -151,7 +151,6 @@ async def handle_index(request: web.Request) -> web.FileResponse:
 
 def build_app() -> web.Application:
     app = web.Application()
-    app.router.add_get("/", handle_index)
     app.router.add_get("/api/products", handle_products)
     app.router.add_post("/api/order", handle_order)
     app.router.add_static("/", path="../webapp", name="webapp", show_index=False)
