@@ -1,6 +1,12 @@
-const tg = window.Telegram.WebApp;
-tg.ready();
-tg.expand();
+const IS_TELEGRAM = !!(window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData);
+const tg = window.Telegram ? window.Telegram.WebApp : null;
+
+if (IS_TELEGRAM) {
+  tg.ready();
+  tg.expand();
+} else {
+  document.getElementById("web-info").classList.remove("hidden");
+}
 
 let CATALOG = {};
 let ORDER_OPEN = true;
@@ -202,12 +208,28 @@ el("submit-btn").onclick = async () => {
     showToast("Buyurtma qabul qilish vaqti tugagan");
     return;
   }
+
   const items = Object.entries(cart).map(([id, item]) => ({
     id: parseInt(id),
     qty: item.qty,
     unit: item.unit,
   }));
   if (items.length === 0) return;
+
+  const payload = { items };
+
+  if (IS_TELEGRAM) {
+    payload.initData = tg.initData;
+  } else {
+    const webName = el("web-name").value.trim();
+    const webPhone = el("web-phone").value.trim();
+    if (!webName || !webPhone) {
+      showToast("Ism va telefon raqamingizni kiriting");
+      return;
+    }
+    payload.webName = webName;
+    payload.webPhone = webPhone;
+  }
 
   el("submit-btn").disabled = true;
   el("submit-btn").textContent = "Yuborilmoqda...";
@@ -216,16 +238,20 @@ el("submit-btn").onclick = async () => {
     const res = await fetch("/api/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: tg.initData, items }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
 
     if (data.ok) {
-      tg.HapticFeedback?.notificationOccurred("success");
+      if (IS_TELEGRAM) tg.HapticFeedback?.notificationOccurred("success");
       showToast("✅ Buyurtma yuborildi!");
-      setTimeout(() => tg.close(), 1200);
+      setTimeout(() => {
+        if (IS_TELEGRAM) tg.close();
+      }, 1200);
     } else if (data.error === "closed") {
       showToast("⏰ Buyurtma vaqti tugagan");
+    } else if (data.error === "missing_info") {
+      showToast("Ism va telefon raqamingizni kiriting");
     } else {
       showToast("Xatolik yuz berdi, qayta urinib ko'ring");
     }
