@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Meat City</title>
+<style>
+:root{--red:#b00d30;--red2:#c4143a;--bg:#f6f4f3;--card:#fff;--tx:#222;--mut:#8a8583;--line:#ece8e6}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding-top:env(safe-area-inset-top)}
+button,input,select{font:inherit}
+.hdr{background:linear-gradient(180deg,var(--red2),var(--red));color:#fff;padding:14px 16px 16px}
+.hdr small{opacity:.8;display:block}.hdr b{font-size:20px}
+.search{margin-top:10px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);border-radius:14px;padding:11px 14px;width:100%;color:#fff;outline:0}
+.search::placeholder{color:rgba(255,255,255,.75)}
+.row{display:flex;gap:8px;overflow-x:auto;padding:10px 12px;scrollbar-width:none}.row::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;border:1px solid var(--line);background:#fff;border-radius:16px;padding:9px 16px;color:#555}
+.chip.on{background:var(--red);color:#fff;border-color:var(--red);font-weight:600}
+.day{flex:0 0 auto;min-width:62px;text-align:center;border-radius:16px;background:#fff;border:1px solid var(--line);padding:8px 10px;line-height:1.25}
+.day small{display:block;color:var(--mut);font-size:12px}.day b{font-size:20px}
+.day.on{background:var(--red);color:#fff;box-shadow:0 4px 12px rgba(176,13,48,.35)}.day.on small{color:#fff}
+.day.off{opacity:.45;border-style:dashed;pointer-events:none}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:6px 12px 110px}
+.card{background:var(--card);border-radius:20px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.img{aspect-ratio:1/0.95;background:#fbf0ec;display:flex;align-items:center;justify-content:center;font-size:54px;background-size:cover;background-position:center}
+.card .in{padding:10px 12px 12px}.nm{font-weight:700;font-size:15px;line-height:1.25;min-height:38px}
+.pr{color:var(--mut);margin:4px 0 8px}
+.qty{display:flex;gap:6px;align-items:center}
+.qty button{width:38px;height:38px;border-radius:12px;border:1px solid var(--line);background:#f6f4f3;font-size:20px}
+.qty input{flex:1;min-width:0;height:38px;text-align:center;border:1px solid var(--line);border-radius:12px;background:#f6f4f3}
+.unit{text-align:center;color:var(--mut);font-size:13px;margin-top:6px;text-transform:uppercase}
+.nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:5}
+.nav button{flex:1;background:none;border:0;padding:8px 0 10px;color:var(--mut);font-size:12px}
+.nav button i{display:block;font-style:normal;font-size:24px}.nav button.on{color:var(--red);font-weight:700}
+.badge{background:var(--red);color:#fff;border-radius:10px;padding:0 6px;font-size:11px;margin-left:2px}
+.page{padding:14px 14px 100px}.page h2{margin:4px 0 12px}
+.box{background:#fff;border-radius:16px;padding:12px 14px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.btn{background:var(--red);color:#fff;border:0;border-radius:14px;padding:14px;width:100%;font-weight:700;font-size:16px}
+.btn.sm{padding:8px 12px;width:auto;font-size:14px;border-radius:10px}.btn.gray{background:#e9e5e3;color:#333}
+.inp{width:100%;padding:13px;border:1px solid var(--line);border-radius:12px;background:#fff;margin:6px 0}
+.mut{color:var(--mut);font-size:13px}.err{color:#c00;margin:8px 0;min-height:20px}
+.login{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:28px}
+.login img{width:110px;height:110px;object-fit:contain;margin:0 auto 14px;display:block}
+.login h1{text-align:center;margin:0 0 20px;color:var(--red)}
+.tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto}
+.line{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+.line:last-child{border:0}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px;color:#fff;text-align:center}
+.ov img{max-width:100%;max-height:70vh;border-radius:12px}
+.toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:12px;z-index:30;max-width:90%}
+.load{text-align:center;color:var(--mut);padding:40px 20px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+// ====== SOZLAMA: o'z Render manzilingizni yozing (oxirida "/" siz) ======
+const API_BASE = "https://zakas-bot.onrender.com";
+// =======================================================================
+
+const ERR = {
+  not_allowed: "Sizga ruxsat berilmagan. Admin bilan bog'laning.",
+  wrong_code: "Kod noto'g'ri.", too_many_attempts: "Juda ko'p urinish. 10 daqiqadan keyin urinib ko'ring.",
+  code_too_short: "Kod kamida 4 ta belgidan iborat bo'lsin.", closed: "Hozir buyurtma qabul qilish vaqti emas.",
+  empty_order: "Savat bo'sh.", bad_date: "Sana noto'g'ri.", exists: "Bu raqam allaqachon bor.",
+  bad_input: "Ism va to'liq telefon raqam (9 ta raqam) kiriting.", bad_excel: "Excel faylni o'qib bo'lmadi.",
+  empty_excel: "Excelda mahsulot/narx topilmadi.", no_file: "Fayl tanlanmadi.", bad_time: "Vaqt noto'g'ri (SS:DD).",
+  network: "Internetga ulanib bo'lmadi. Server uyg'onayotgan bo'lishi mumkin, qayta urinib ko'ring.",
+  upload_failed: "Rasm yuklanmadi.", storage_not_configured: "Rasm saqlash sozlanmagan."
+};
+const WD = ["Ya","Du","Se","Cho","Pa","Ju","Sh"];
+const $ = (s, r = document) => r.querySelector(s);
+const fmt = n => Math.round(n).toLocaleString("ru").replace(/\u00a0/g, " ");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const clean = n => n.replace(/\s*\*[^*]*\*\s*$/, "").trim();
+const ld = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+const S = { token: localStorage.getItem("tk") || "", user: JSON.parse(localStorage.getItem("us") || "null"),
+  catalog: {}, cat: null, q: "", date: null, tab: "menu", cart: JSON.parse(localStorage.getItem("cart") || "{}"),
+  status: {}, adminTab: "users" };
+
+async function api(path, o = {}) {
+  const h = {}; let body = o.body;
+  if (S.token) h.Authorization = "Bearer " + S.token;
+  if (body !== undefined && !(body instanceof Blob) && !(body instanceof FormData)) { body = JSON.stringify(body); h["Content-Type"] = "application/json"; }
+  if (o.type) h["Content-Type"] = o.type;
+  let r, d = {};
+  try { r = await fetch(API_BASE + "/api/v2" + path, { method: o.method || (body !== undefined ? "POST" : "GET"), headers: h, body });
+        try { d = await r.json(); } catch (e) {} }
+  catch (e) { throw new Error("network"); }
+  if (S.token && (r.status === 401 || d.error === "not_allowed")) { logout(); throw new Error("not_allowed"); }
+  if (!r.ok || d.ok === false) throw new Error(d.error || "network");
+  return d;
+}
+const say = e => ERR[e.message] || ("Xato: " + e.message);
+function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
+function logout() { S.token = ""; S.user = null; localStorage.removeItem("tk"); localStorage.removeItem("us"); renderLogin(); }
+const saveCart = () => localStorage.setItem("cart", JSON.stringify(S.cart));
+
+// ---------------------------------------------------------------- KIRISH
+function renderLogin(step = "phone", phone = "") {
+  $("#app").innerHTML = `<div class="login">
+    <img src="logo.png" alt="" onerror="this.style.display='none'"><h1>Meat City</h1>
+    <div class="mut" style="text-align:center">${step === "phone" ? "Telefon raqamingizni kiriting" : step === "new" ? "Yangi kod o'ylab toping (kamida 4 ta belgi). Keyingi safar shu kod bilan kirasiz." : "Kodingizni kiriting"}</div>
+    <input id="ph" class="inp" type="tel" placeholder="+998 90 123 45 67" value="${esc(phone)}" ${step !== "phone" ? "readonly" : ""}>
+    ${step !== "phone" ? `<input id="cd" class="inp" type="password" inputmode="numeric" placeholder="Kod" autofocus>` : ""}
+    <div class="err" id="er"></div>
+    <button class="btn" id="go">${step === "phone" ? "Davom etish" : "Kirish"}</button>
+    ${step !== "phone" ? `<button class="btn gray" style="margin-top:8px" id="bk">Orqaga</button>` : ""}</div>`;
+  const er = m => $("#er").textContent = m;
+  if ($("#bk")) $("#bk").onclick = () => renderLogin();
+  $("#go").onclick = async () => {
+    const ph = $("#ph").value.trim(); er(""); $("#go").disabled = true;
+    try {
+      if (step === "phone") {
+        const r = await api("/check", { body: { phone: ph } });
+        if (r.status === "denied") er(ERR.not_allowed); else renderLogin(r.status, ph);
+      } else {
+        const r = await api("/login", { body: { phone: ph, code: $("#cd").value.trim() } });
+        S.token = r.token; S.user = r.user; localStorage.setItem("tk", r.token); localStorage.setItem("us", JSON.stringify(r.user));
+        start();
+      }
+    } catch (e) { er(say(e)); }
+    if ($("#go")) $("#go").disabled = false;
+  };
+}
+
+// ---------------------------------------------------------------- BOSHLASH
+async function start() {
+  $("#app").innerHTML = `<div class="load">Yuklanmoqda…<br><span class="mut">Birinchi ochilishda 30–60 soniya kutish mumkin</span></div>`;
+  try {
+    const r = await api("/products"); S.catalog = r.catalog; S.status = r;
+    S.cat = S.cat && S.catalog[S.cat] ? S.cat : Object.keys(S.catalog)[0];
+    pickDate(); shell(); show(S.tab);
+  } catch (e) {
+    if (!S.token) return;
+    $("#app").innerHTML = `<div class="load">${esc(say(e))}<br><br><button class="btn sm" onclick="start()">Qayta urinish</button></div>`;
+  }
+}
+function days() {
+  const out = [], t = new Date();
+  for (let i = 0; i < 8; i++) { const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + i);
+    out.push({ i, d, key: ld(d), off: d.getDay() === 0 || (i === 0 && !S.status.order_open) }); }
+  return out;
+}
+function pickDate() { const ds = days(); if (!ds.find(x => x.key === S.date && !x.off)) { const x = ds.find(d => d.i >= 1 && !d.off) || ds.find(d => !d.off); S.date = x ? x.key : ds[1].key; } }
+
+function shell() {
+  $("#app").innerHTML = `<div id="view"></div><div class="nav" id="nav"></div>`;
+  $("#nav").onclick = e => { const b = e.target.closest("button"); if (b) show(b.dataset.t); };
+  navUpdate();
+}
+function navUpdate() {
+  const n = Object.keys(S.cart).length, t = S.tab;
+  const items = [["menu","🏠","Menyu"],["cart","🛒","Savat"],["hist","🕘","Tarix"]];
+  if (S.user && S.user.is_admin) items.push(["adm","⚙️","Sozlamalar"]);
+  $("#nav").innerHTML = items.map(([k, ic, l]) => `<button data-t="${k}" class="${t === k ? "on" : ""}"><i>${ic}</i>${l}${k === "cart" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
+}
+function show(t) { S.tab = t; navUpdate(); ({ menu: viewMenu, cart: viewCart, hist: viewHist, adm: viewAdmin })[t](); window.scrollTo(0, 0); }
+
+// ---------------------------------------------------------------- MENYU
+function viewMenu() {
+  $("#view").innerHTML = `<div class="hdr"><small>Xush kelibsiz,</small><b>${esc(S.user.name)}</b>
+    <input id="q" class="search" placeholder="Mahsulot qidirish…" value="${esc(S.q)}"></div>
+    <div class="row" id="days"></div><div class="row" id="cats"></div><div class="grid" id="grid"></div>`;
+  $("#q").oninput = e => { S.q = e.target.value; grid(); };
+  drawDays(); drawCats(); grid();
+}
+function drawDays() {
+  $("#days").innerHTML = days().map(x => `<div class="day ${x.key === S.date ? "on" : ""} ${x.off ? "off" : ""}" data-d="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b></div>`).join("");
+  $("#days").onclick = e => { const d = e.target.closest(".day"); if (d && !d.classList.contains("off")) { S.date = d.dataset.d; drawDays(); } };
+}
+function drawCats() {
+  $("#cats").innerHTML = Object.keys(S.catalog).map(c => `<button class="chip ${c === S.cat ? "on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
+  $("#cats").onclick = e => { const b = e.target.closest(".chip"); if (b) { S.cat = b.dataset.c; drawCats(); grid(); window.scrollTo(0, 0); } };
+}
+function grid() {
+  const q = S.q.trim().toLowerCase();
+  const list = q ? Object.values(S.catalog).flat().filter(p => p.name.toLowerCase().includes(q)) : (S.catalog[S.cat] || []);
+  const g = $("#grid");
+  g.innerHTML = list.length ? list.map(card).join("") : `<div class="load" style="grid-column:1/3">Hech narsa topilmadi</div>`;
+  g.onclick = gridClick; g.onchange = gridChange;
+}
+function card(p) {
+  const c = S.cart[p.id], u = c ? c.unit : "kg";
+  return `<div class="card" data-id="${p.id}">
+    <div class="img" data-img="${p.id}" style="${p.image ? `background-image:url('${esc(p.image)}')` : ""}">${p.image ? "" : "🥩"}</div>
+    <div class="in"><div class="nm">${esc(clean(p.name))}</div><div class="pr">${fmt(p.price)} so'm/${u}</div>
+    <div class="qty"><button data-m="-">−</button><input type="number" inputmode="decimal" min="0" step="any" value="${c ? c.qty : 0}"><button data-m="+">+</button></div>
+    <div class="unit" data-u="1">${u} ⇄</div></div></div>`;
+}
+const prod = id => Object.values(S.catalog).flat().find(p => p.id == id);
+function setQty(id, qty, unit) {
+  qty = Math.max(0, Math.round(qty * 100) / 100);
+  if (qty <= 0) delete S.cart[id]; else S.cart[id] = { qty, unit: unit || (S.cart[id] ? S.cart[id].unit : "kg") };
+  saveCart(); navUpdate();
+}
+function gridClick(e) {
+  const cd = e.target.closest(".card"); if (!cd) return; const id = +cd.dataset.id, c = S.cart[id];
+  const m = e.target.closest("[data-m]");
+  if (m) { const inp = $("input", cd); const v = +(inp.value || 0) + (m.dataset.m === "+" ? 1 : -1); setQty(id, v); inp.value = Math.max(0, v); return; }
+  if (e.target.closest("[data-u]")) { const u = (c ? c.unit : "kg") === "kg" ? "dona" : "kg"; if (c) c.unit = u; else if (+$("input", cd).value > 0) setQty(id, +$("input", cd).value, u);
+    $(".unit", cd).textContent = u + " ⇄"; $(".pr", cd).textContent = `${fmt(prod(id).price)} so'm/${u}`; saveCart(); return; }
+  if (e.target.closest("[data-img]")) viewer(id);
+}
+function gridChange(e) { if (e.target.tagName !== "INPUT") return; const cd = e.target.closest(".card"); setQty(+cd.dataset.id, parseFloat(String(e.target.value).replace(",", ".")) || 0); }
+
+// ---------------------------------------------------------------- RASM KO'RISH / ALMASHTIRISH
+function viewer(id) {
+  const p = prod(id), ov = document.createElement("div"); ov.className = "ov";
+  ov.innerHTML = `${p.image ? `<img src="${esc(p.image)}">` : `<div style="font-size:90px">🥩</div>`}<div><b>${esc(clean(p.name))}</b><br>${fmt(p.price)} so'm</div>
+    ${S.user.is_admin ? `<button class="btn sm" id="chg">📷 Rasmni o'zgartirish</button><input id="fl" type="file" accept="image/*" hidden>` : ""}
+    <button class="btn sm gray" id="cl">Yopish</button>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov || e.target.id === "cl") ov.remove(); };
+  if (S.user.is_admin) {
+    $("#chg", ov).onclick = () => $("#fl", ov).click();
+    $("#fl", ov).onchange = async e => {
+      const f = e.target.files[0]; if (!f) return; toast("Yuklanmoqda…");
+      try { const blob = await shrink(f, 900); const r = await api(`/admin/products/${id}/image`, { body: blob, type: "image/jpeg" });
+        p.image = r.image; ov.remove(); grid(); toast("Rasm yangilandi"); } catch (er) { toast(say(er)); }
+    };
+  }
+}
+function shrink(file, max) {
+  return new Promise((res, rej) => { const im = new Image(), u = URL.createObjectURL(file);
+    im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement("canvas");
+      c.width = im.width * k; c.height = im.height * k; c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+      c.toBlob(b => b ? res(b) : rej(new Error("bad_image")), "image/jpeg", 0.85); URL.revokeObjectURL(u); };
+    im.onerror = () => rej(new Error("bad_image")); im.src = u; });
+}
+
+// ---------------------------------------------------------------- SAVAT
+function viewCart() {
+  const ids = Object.keys(S.cart);
+  let kg = 0, dona = 0, sum = 0;
+  const rows = ids.map(id => { const p = prod(id), c = S.cart[id]; if (!p) return ""; sum += p.price * c.qty; c.unit === "kg" ? kg += c.qty : dona += c.qty;
+    return `<div class="box" data-id="${id}"><b>${esc(clean(p.name))}</b><div class="mut">${fmt(p.price)} so'm/${c.unit}</div>
+      <div class="qty" style="margin-top:8px"><button data-m="-">−</button><input type="number" inputmode="decimal" value="${c.qty}"><button data-m="+">+</button>
+      <button data-x="1" style="width:auto;padding:0 12px;color:#c00">🗑</button></div></div>`; }).join("");
+  $("#view").innerHTML = `<div class="page"><h2>Savat</h2>${rows || `<div class="load">Savat bo'sh</div>`}
+    ${ids.length ? `<div class="box"><div class="line"><span>Sana</span><b>${S.date.split("-").reverse().join(".")}</b></div>
+      <div class="line"><span>Jami</span><b>${kg ? kg + " kg" : ""} ${dona ? dona + " dona" : ""}</b></div>
+      <div class="line"><span>Taxminiy summa</span><b>${fmt(sum)} so'm</b></div></div>
+      ${S.status.order_open ? "" : `<div class="err">Buyurtma ${S.status.open_time}–${S.status.cutoff_time} oralig'ida qabul qilinadi.</div>`}
+      <button class="btn" id="send">Buyurtma yuborish</button>` : ""}</div>`;
+  $("#view").onclick = e => { const b = e.target.closest(".box"); if (!b) return; const id = b.dataset.id, inp = $("input", b), c = S.cart[id];
+    if (e.target.closest("[data-x]")) { delete S.cart[id]; saveCart(); navUpdate(); viewCart(); }
+    else if (e.target.closest("[data-m]")) { setQty(id, c.qty + (e.target.closest("[data-m]").dataset.m === "+" ? 1 : -1)); viewCart(); } };
+  $("#view").onchange = e => { if (e.target.tagName === "INPUT") { setQty(e.target.closest(".box").dataset.id, parseFloat(String(e.target.value).replace(",", ".")) || 0); viewCart(); } };
+  if ($("#send")) $("#send").onclick = async () => {
+    $("#send").disabled = true;
+    try { await api("/order", { body: { date: S.date, items: ids.map(id => ({ id: +id, qty: S.cart[id].qty, unit: S.cart[id].unit })) } });
+      S.cart = {}; saveCart(); navUpdate(); toast("✅ Buyurtma yuborildi"); show("hist");
+    } catch (e) { toast(say(e)); $("#send").disabled = false; if (e.message === "closed") refreshStatus(); }
+  };
+}
+async function refreshStatus() { try { const r = await api("/products"); S.status = r; } catch (e) {} }
+
+// ---------------------------------------------------------------- TARIX
+async function viewHist() {
+  $("#view").innerHTML = `<div class="page"><h2>Tarix</h2><div class="load">Yuklanmoqda…</div></div>`;
+  try { const r = await api("/orders");
+    $("#view .page").innerHTML = `<h2>Tarix</h2>` + (r.orders.length ? r.orders.map(o => `<div class="box"><div class="line"><b>#${o.id} · ${o.date.split("-").reverse().join(".")}</b><span class="mut">${o.created_at}</span></div>
+      ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
+      <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Hali buyurtma yo'q</div>`);
+  } catch (e) { $("#view .page").innerHTML += `<div class="err">${esc(say(e))}</div>`; }
+}
+
+// ---------------------------------------------------------------- ADMIN
+function viewAdmin() {
+  const T = [["users","Foydalanuvchilar"],["prices","Narxlar"],["time","Vaqt"],["orders","Buyurtmalar"]];
+  $("#view").innerHTML = `<div class="page"><h2>Sozlamalar</h2><div class="tabs">${T.map(([k, l]) => `<button class="chip ${S.adminTab === k ? "on" : ""}" data-a="${k}">${l}</button>`).join("")}</div>
+    <div id="ad"></div><button class="btn gray" style="margin-top:20px" id="lo">Chiqish</button></div>`;
+  $(".tabs").onclick = e => { const b = e.target.closest("[data-a]"); if (b) { S.adminTab = b.dataset.a; viewAdmin(); } };
+  $("#lo").onclick = () => { if (confirm("Hisobdan chiqasizmi?")) logout(); };
+  ({ users: admUsers, prices: admPrices, time: admTime, orders: admOrders })[S.adminTab]();
+}
+async function admUsers() {
+  const el = $("#ad"); el.innerHTML = `<div class="load">Yuklanmoqda…</div>`;
+  try {
+    const { users } = await api("/admin/users");
+    el.innerHTML = `<div class="box"><b>Yangi foydalanuvchi</b><input id="nn" class="inp" placeholder="Ism"><input id="np" class="inp" type="tel" placeholder="+998 90 123 45 67"><button class="btn sm" id="na">Qo'shish</button></div>` +
+      users.map(u => `<div class="box" data-id="${u.id}"><div class="line"><b>${esc(u.name)}${u.is_admin ? " 👑" : ""}</b><span class="${u.active ? "" : "err"}">${u.active ? "Faol" : "O'chirilgan"}</span></div>
+        <div class="mut">${u.phone} · Kod: <b>${u.code ? esc(u.code) : "— (o'zi yozadi)"}</b></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"><button class="btn sm gray" data-act="gen">Yangi kod</button><button class="btn sm gray" data-act="set">Kodni yozish</button>
+        <button class="btn sm gray" data-act="clr">Kodni tozalash</button>${u.id !== S.user.id ? `<button class="btn sm gray" data-act="tog">${u.active ? "Ruxsatni olish" : "Ruxsat berish"}</button>` : ""}</div></div>`).join("");
+    $("#na").onclick = async () => { try { await api("/admin/users", { body: { name: $("#nn").value, phone: $("#np").value } }); toast("Qo'shildi"); admUsers(); } catch (e) { toast(say(e)); } };
+    el.onclick = async e => { const b = e.target.closest("[data-act]"); if (!b) return; const bx = b.closest(".box"), id = bx.dataset.id, u = users.find(x => x.id == id); let body;
+      if (b.dataset.act === "gen") body = { generate_code: true };
+      else if (b.dataset.act === "set") { const c = prompt("Yangi kod (kamida 4 ta belgi):"); if (!c) return; body = { code: c }; }
+      else if (b.dataset.act === "clr") { if (!confirm("Kod tozalansinmi? Foydalanuvchi kirishda o'zi yangi kod yozadi.")) return; body = { code: null }; }
+      else body = { active: !u.active };
+      try { await api("/admin/users/" + id, { body }); admUsers(); } catch (er) { toast(say(er)); } };
+  } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
+}
+async function admPrices() {
+  const el = $("#ad"); el.innerHTML = `<div class="load">Yuklanmoqda…</div>`;
+  try {
+    const { products } = await api("/admin/products");
+    el.innerHTML = `<div class="box"><b>Excel orqali narx yangilash</b><div class="mut">Fayl ustunlari: "Наименование/Nomi" va "Цена/Narx". Nomi bo'yicha topiladi.</div>
+      <input id="xf" type="file" accept=".xlsx,.xlsm" class="inp"><label class="mut"><input type="checkbox" id="xn"> Topilmagan mahsulotlarni yangi qilib qo'shish</label>
+      <button class="btn sm" id="xi" style="margin-top:8px">Import qilish</button><div id="xr" class="mut" style="margin-top:8px"></div></div>
+      <input id="ps" class="inp" placeholder="Mahsulot qidirish…"><div id="pl"></div>`;
+    const draw = () => { const q = $("#ps").value.trim().toLowerCase(); const l = products.filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 60);
+      $("#pl").innerHTML = l.map(p => `<div class="box" data-id="${p.id}"><div>${esc(clean(p.name))} <span class="mut">· ${esc(p.category)}</span></div>
+        <div class="qty" style="margin-top:6px"><input type="number" inputmode="numeric" value="${p.price}"><button data-s="1" style="width:auto;padding:0 12px">💾</button>
+        <button data-v="1" style="width:auto;padding:0 12px">${p.active ? "👁" : "🚫"}</button></div></div>`).join("") + (l.length === 60 ? `<div class="mut">Qidiruv orqali toraytiring…</div>` : ""); };
+    draw(); $("#ps").oninput = draw;
+    $("#pl").onclick = async e => { const bx = e.target.closest(".box"); if (!bx) return; const id = bx.dataset.id, p = products.find(x => x.id == id);
+      try { if (e.target.closest("[data-s]")) { p.price = +$("input", bx).value; await api("/admin/products/" + id, { body: { price: p.price } }); toast("Narx saqlandi"); }
+        else if (e.target.closest("[data-v]")) { p.active = !p.active; await api("/admin/products/" + id, { body: { active: p.active } }); draw(); } } catch (er) { toast(say(er)); } };
+    $("#xi").onclick = async () => { const f = $("#xf").files[0]; if (!f) return toast(ERR.no_file); const fd = new FormData(); fd.append("add_new", $("#xn").checked ? "1" : "0"); fd.append("file", f);
+      $("#xr").textContent = "Yuklanmoqda…";
+      try { const r = await api("/admin/import-excel", { body: fd });
+        $("#xr").innerHTML = `✅ Yangilandi: <b>${r.updated}</b> · O'zgarmagan: ${r.unchanged} · Qo'shildi: ${r.added} · Topilmadi: ${r.not_found_count}` + (r.not_found.length ? `<br>${r.not_found.map(esc).join("<br>")}` : "");
+      } catch (e) { $("#xr").textContent = say(e); } };
+  } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
+}
+async function admTime() {
+  const el = $("#ad"); try { const s = await api("/admin/settings");
+    el.innerHTML = `<div class="box"><b>Buyurtma qabul qilish vaqti</b><div class="mut">Shu oraliqdan tashqarida buyurtma berib bo'lmaydi.</div>
+      Boshlanish<input id="t1" type="time" class="inp" value="${s.open_time}">Tugash<input id="t2" type="time" class="inp" value="${s.cutoff_time}"><button class="btn" id="ts">Saqlash</button></div>`;
+    $("#ts").onclick = async () => { try { const r = await api("/admin/settings", { body: { open_time: $("#t1").value, cutoff_time: $("#t2").value } }); Object.assign(S.status, r); toast("Saqlandi"); } catch (e) { toast(say(e)); } };
+  } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
+}
+async function admOrders() {
+  const el = $("#ad"); el.innerHTML = `<input id="od" type="date" class="inp" value="${S.date}"><div id="ol" class="load">Yuklanmoqda…</div>`;
+  const load = async () => { try { const { orders } = await api("/admin/orders?date=" + $("#od").value);
+      $("#ol").className = ""; $("#ol").innerHTML = orders.length ? orders.map(o => `<div class="box"><b>#${o.id} · ${esc(o.user)}</b><div class="mut">${o.created_at}</div>
+        ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
+        <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Bu sanaga buyurtma yo'q</div>`;
+    } catch (e) { $("#ol").textContent = say(e); } };
+  $("#od").onchange = load; load();
+}
+
+// ---------------------------------------------------------------- ISHGA TUSHIRISH
+if (S.token && S.user) start(); else renderLogin();
+</script>
+</body>
+</html>
