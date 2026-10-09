@@ -34,11 +34,12 @@ PRODUCTS_BY_ID = {p["id"]: p for cat in CATALOG.values() for p in cat}
 # ---------------------------------------------------------------- Telegram bot
 
 def main_keyboard(user_id: int = 0) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text="🛒 Buyurtma berish", web_app=WebAppInfo(url=WEBAPP_URL))]]
-    if ADMIN_CHAT_ID and user_id == ADMIN_CHAT_ID and DATABASE_URL and SECRET_KEY:
-        rows.append([KeyboardButton(
-            text="⚙️ Admin panel", web_app=WebAppInfo(url=WEBAPP_URL.rstrip("/") + "/app/"))])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    # Baza ulangan bo'lsa yangi ilova (/app/), aks holda eski Mini App
+    url = WEBAPP_URL.rstrip("/") + "/app/" if (DATABASE_URL and SECRET_KEY) else WEBAPP_URL
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="🛒 Buyurtma berish", web_app=WebAppInfo(url=url))]],
+        resize_keyboard=True,
+    )
 
 
 @dp.message(CommandStart())
