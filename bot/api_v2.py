@@ -472,13 +472,20 @@ async def h_product_image(request):
 
     path = f"p{pid}_{int(time.time())}.{ext}"
     url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{path}"
-    headers = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY,
-               "Content-Type": ctype, "x-upsert": "true"}
-    async with aiohttp.ClientSession() as s:
-        async with s.post(url, data=body, headers=headers) as r:
-            if r.status >= 300:
-                log.error("Storage xatosi %s: %s", r.status, await r.text())
-                return err("upload_failed", 502)
+    headers = {"apikey": SUPABASE_KEY, "Content-Type": ctype, "x-upsert": "true"}
+    if SUPABASE_KEY.startswith("eyJ"):  # eski JWT kalit; yangi sb_secret_ kalit faqat apikey'da
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, data=body, headers=headers) as r:
+                if r.status >= 300:
+                    text = (await r.text())[:300]
+                    log.error("Storage xatosi %s: %s", r.status, text)
+                    return web.json_response(
+                        {"ok": False, "error": "upload_failed", "detail": f"{r.status}: {text}"}, status=502)
+    except Exception as e:
+        log.error("Storage ulanish xatosi: %s", e)
+        return web.json_response({"ok": False, "error": "upload_failed", "detail": str(e)[:200]}, status=502)
     public = f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{path}"
     async with db.pool.acquire() as c:
         r = await c.fetchrow("update products set image_url=$1 where id=$2 returning id", public, pid)
