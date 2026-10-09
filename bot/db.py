@@ -91,7 +91,7 @@ async def init_db():
             await c.execute(
                 "insert into users(phone,name,code,is_admin) values($1,'Admin',$2,true) "
                 "on conflict (phone) do update set is_admin=true, active=true, "
-                "code=coalesce(users.code, excluded.code)",
+                "code=coalesce(excluded.code, users.code)",
                 phone, ADMIN_CODE or None,
             )
     log.info("Baza tayyor")
