@@ -1,0 +1,6 @@
+{
+  "appId": "uz.meatcity.zakas",
+  "appName": "Meat City",
+  "webDir": "www",
+  "server": { "androidScheme": "https" }
+}
