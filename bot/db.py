@@ -29,6 +29,7 @@ create table if not exists users(
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
+alter table users add column if not exists tg_id bigint;
 create table if not exists products(
   id integer primary key,
   name text not null,
@@ -91,7 +92,7 @@ async def init_db():
             await c.execute(
                 "insert into users(phone,name,code,is_admin) values($1,'Admin',$2,true) "
                 "on conflict (phone) do update set is_admin=true, active=true, "
-                "code=coalesce(excluded.code, users.code)",
+                "code=coalesce(users.code, excluded.code)",
                 phone, ADMIN_CODE or None,
             )
     log.info("Baza tayyor")
