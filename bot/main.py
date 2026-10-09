@@ -16,12 +16,16 @@ from aiogram.types import (
 from config import BOT_TOKEN, ADMIN_CHAT_ID, WEBAPP_URL, PORT
 from catalog import load_catalog, is_order_time_open, open_str, cutoff_str
 from verify import verify_init_data
+from config import DATABASE_URL, SECRET_KEY
+import db
+import api_v2
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("zakas-bot")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+api_v2.BOT = bot
 
 CATALOG = load_catalog()  # {category: [{id, name, price}, ...]}
 PRODUCTS_BY_ID = {p["id"]: p for cat in CATALOG.values() for p in cat}
@@ -150,7 +154,16 @@ async def handle_index(request: web.Request) -> web.FileResponse:
 
 
 def build_app() -> web.Application:
-    app = web.Application()
+    app = web.Application(
+        client_max_size=12 * 1024 * 1024,
+        middlewares=[api_v2.cors_mw, api_v2.auth_mw] if DATABASE_URL and SECRET_KEY else [],
+    )
+    if DATABASE_URL and SECRET_KEY:
+        api_v2.add_routes(app)  # yangi Android ilova API'si
+    else:
+        async def _health(request):
+            return web.json_response({"ok": True})
+        app.router.add_get("/health", _health)
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/products", handle_products)
     app.router.add_post("/api/order", handle_order)
@@ -158,6 +171,10 @@ def build_app() -> web.Application:
     return app
 
 async def main():
+    if DATABASE_URL and SECRET_KEY:
+        await db.init_db()
+    else:
+        log.warning("DATABASE_URL/SECRET_KEY yo'q — yangi API o'chiq, faqat eski bot ishlaydi")
     app = build_app()
     runner = web.AppRunner(app)
     await runner.setup()
