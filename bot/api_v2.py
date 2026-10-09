@@ -13,8 +13,9 @@ import aiohttp
 from aiohttp import web
 
 import db
+from verify import verify_init_data
 from config import (
-    SECRET_KEY, TIMEZONE, ADMIN_CHAT_ID,
+    SECRET_KEY, TIMEZONE, ADMIN_CHAT_ID, ADMIN_PHONE,
     SUPABASE_URL, SUPABASE_KEY, SUPABASE_BUCKET,
 )
 
@@ -95,7 +96,7 @@ async def cors_mw(request, handler):
     return resp
 
 
-PUBLIC = {"/api/v2/check", "/api/v2/login"}
+PUBLIC = {"/api/v2/check", "/api/v2/login", "/api/v2/tg-login"}
 
 
 @web.middleware
@@ -151,6 +152,28 @@ async def h_login(request):
             FAILS[phone].append(now)
             return err("wrong_code", 401)
     FAILS.pop(phone, None)
+    return web.json_response({"ok": True, "token": make_token(u["id"]), "user": user_json(u)})
+
+
+async def h_tg_login(request):
+    """Telegram Mini App ichidan: faqat ADMIN_CHAT_ID egasi parolsiz admin bo'lib kiradi."""
+    data = await request.json()
+    pairs = verify_init_data(str(data.get("initData") or ""))
+    if pairs is None:
+        return err("auth_failed", 401)
+    try:
+        if time.time() - int(pairs.get("auth_date", 0)) > 7 * 24 * 3600:
+            return err("auth_failed", 401)
+        tg_id = int(json.loads(pairs.get("user", "{}")).get("id", 0))
+    except (ValueError, TypeError):
+        return err("auth_failed", 401)
+    if not ADMIN_CHAT_ID or tg_id != ADMIN_CHAT_ID:
+        return err("not_allowed", 403)
+    async with db.pool.acquire() as c:
+        u = await c.fetchrow(
+            "select * from users where phone=$1 and is_admin and active", db.norm_phone(ADMIN_PHONE))
+    if not u:
+        return err("not_allowed", 403)
     return web.json_response({"ok": True, "token": make_token(u["id"]), "user": user_json(u)})
 
 
@@ -491,8 +514,19 @@ async def h_health(request):
         return web.json_response({"ok": False, "error": str(e)}, status=500)
 
 
+APP_DIR = "../app/www"
+
+
+async def h_app_index(request):
+    return web.FileResponse(f"{APP_DIR}/index.html", headers={"Cache-Control": "no-cache"})
+
+
 def add_routes(app: web.Application):
     r = app.router
+    r.add_get("/app", h_app_index)
+    r.add_get("/app/", h_app_index)
+    r.add_static("/app/", path=APP_DIR, show_index=False)
+    r.add_post("/api/v2/tg-login", h_tg_login)
     r.add_get("/health", h_health)
     r.add_post("/api/v2/check", h_check)
     r.add_post("/api/v2/login", h_login)
