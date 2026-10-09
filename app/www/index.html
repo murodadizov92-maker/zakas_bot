@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Meat City</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>html{zoom:.8}
 :root{--red:#b00d30;--red2:#c4143a;--bg:#f6f4f3;--card:#fff;--tx:#222;--mut:#8a8583;--line:#ece8e6}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -55,7 +56,7 @@ button,input,select{font:inherit}
 <div id="app"></div>
 <script>
 // ====== SOZLAMA: o'z Render manzilingizni yozing (oxirida "/" siz) ======
-const API_BASE = "https://zakas-bot.onrender.com";
+const API_BASE = location.hostname === "localhost" ? "https://zakas-bot.onrender.com" : location.origin;
 // =======================================================================
 
 const ERR = {
@@ -116,7 +117,7 @@ function renderLogin(step = "phone", phone = "") {
         const r = await api("/check", { body: { phone: ph } });
         if (r.status === "denied") er(ERR.not_allowed); else renderLogin(r.status, ph);
       } else {
-        const r = await api("/login", { body: { phone: ph, code: $("#cd").value.trim() } });
+        const r = await api("/login", { body: { phone: ph, code: $("#cd").value.trim(), initData: (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData) || "" } });
         S.token = r.token; S.user = r.user; localStorage.setItem("tk", r.token); localStorage.setItem("us", JSON.stringify(r.user));
         start();
       }
@@ -335,7 +336,18 @@ async function admOrders() {
 }
 
 // ---------------------------------------------------------------- ISHGA TUSHIRISH
-if (S.token && S.user) start(); else renderLogin();
+(async function boot() {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg && tg.initData) {
+    try { tg.ready(); tg.expand(); } catch (e) {}
+    try {
+      const r = await api("/tg-login", { body: { initData: tg.initData } });
+      S.token = r.token; S.user = r.user; localStorage.setItem("tk", r.token); localStorage.setItem("us", JSON.stringify(r.user));
+      return start();
+    } catch (e) { /* admin emas: telefon + kod bilan kiradi */ }
+  }
+  if (S.token && S.user) start(); else renderLogin();
+})();
 </script>
 </body>
 </html>
