@@ -60,6 +60,19 @@ def user_json(u, with_code: bool = False) -> dict:
     return d
 
 
+def tg_user_id(init_data: str) -> int | None:
+    """Telegram initData to'g'ri va yangi bo'lsa — foydalanuvchi ID'si, aks holda None."""
+    pairs = verify_init_data(init_data or "")
+    if pairs is None:
+        return None
+    try:
+        if time.time() - int(pairs.get("auth_date", 0)) > 7 * 24 * 3600:
+            return None
+        return int(json.loads(pairs.get("user", "{}")).get("id", 0)) or None
+    except (ValueError, TypeError):
+        return None
+
+
 def hhmm_to_min(s: str) -> int:
     h, m = s.split(":")
     return int(h) * 60 + int(m)
@@ -151,27 +164,25 @@ async def h_login(request):
         elif not hmac.compare_digest(u["code"], code):
             FAILS[phone].append(now)
             return err("wrong_code", 401)
+        tg = tg_user_id(str(data.get("initData") or ""))
+        if tg:  # Telegram ichidan kirdi: keyingi safar kod so'ramasligi uchun bog'laymiz
+            await c.execute("update users set tg_id=null where tg_id=$1", tg)
+            await c.execute("update users set tg_id=$1 where id=$2", tg, u["id"])
     FAILS.pop(phone, None)
     return web.json_response({"ok": True, "token": make_token(u["id"]), "user": user_json(u)})
 
 
 async def h_tg_login(request):
-    """Telegram Mini App ichidan: faqat ADMIN_CHAT_ID egasi parolsiz admin bo'lib kiradi."""
+    """Telegram Mini App: bog'langan foydalanuvchi (yoki ADMIN_CHAT_ID egasi) kodsiz kiradi."""
     data = await request.json()
-    pairs = verify_init_data(str(data.get("initData") or ""))
-    if pairs is None:
+    tg_id = tg_user_id(str(data.get("initData") or ""))
+    if tg_id is None:
         return err("auth_failed", 401)
-    try:
-        if time.time() - int(pairs.get("auth_date", 0)) > 7 * 24 * 3600:
-            return err("auth_failed", 401)
-        tg_id = int(json.loads(pairs.get("user", "{}")).get("id", 0))
-    except (ValueError, TypeError):
-        return err("auth_failed", 401)
-    if not ADMIN_CHAT_ID or tg_id != ADMIN_CHAT_ID:
-        return err("not_allowed", 403)
     async with db.pool.acquire() as c:
-        u = await c.fetchrow(
-            "select * from users where phone=$1 and is_admin and active", db.norm_phone(ADMIN_PHONE))
+        u = await c.fetchrow("select * from users where tg_id=$1 and active", tg_id)
+        if not u and ADMIN_CHAT_ID and tg_id == ADMIN_CHAT_ID:
+            u = await c.fetchrow(
+                "select * from users where phone=$1 and is_admin and active", db.norm_phone(ADMIN_PHONE))
     if not u:
         return err("not_allowed", 403)
     return web.json_response({"ok": True, "token": make_token(u["id"]), "user": user_json(u)})
@@ -310,6 +321,8 @@ async def h_user_update(request):
         if uid == request["user"]["id"] and not data["is_admin"]:
             return err("cannot_demote_self")
         add("is_admin", bool(data["is_admin"]))
+    if data.get("generate_code") or "code" in data:
+        add("tg_id", None)  # kod o'zgarsa Telegram'dan qayta kod bilan kirishi kerak
     if data.get("generate_code"):
         add("code", f"{secrets.randbelow(10000):04d}")
     elif "code" in data:  # None yoki "" => kodni tozalash (foydalanuvchi o'zi qayta yozadi)
