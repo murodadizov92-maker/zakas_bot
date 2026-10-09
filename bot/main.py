@@ -33,13 +33,12 @@ PRODUCTS_BY_ID = {p["id"]: p for cat in CATALOG.values() for p in cat}
 
 # ---------------------------------------------------------------- Telegram bot
 
-def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🛒 Buyurtma berish", web_app=WebAppInfo(url=WEBAPP_URL))]
-        ],
-        resize_keyboard=True,
-    )
+def main_keyboard(user_id: int = 0) -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(text="🛒 Buyurtma berish", web_app=WebAppInfo(url=WEBAPP_URL))]]
+    if ADMIN_CHAT_ID and user_id == ADMIN_CHAT_ID and DATABASE_URL and SECRET_KEY:
+        rows.append([KeyboardButton(
+            text="⚙️ Admin panel", web_app=WebAppInfo(url=WEBAPP_URL.rstrip("/") + "/app/"))])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 @dp.message(CommandStart())
@@ -48,25 +47,36 @@ async def cmd_start(message: Message):
         f"Assalomu alaykum, {message.from_user.full_name}!\n\n"
         f"Buyurtma berish uchun pastdagi tugmani bosing.\n"
         f"⏰ Buyurtmalar har kuni soat {open_str()} dan {cutoff_str()} gacha qabul qilinadi.",
-        reply_markup=main_keyboard(),
+        reply_markup=main_keyboard(message.from_user.id),
     )
 
 
 @dp.message(F.text == "🛒 Buyurtma berish")
 async def reopen(message: Message):
-    await message.answer("Buyurtma oynasi:", reply_markup=main_keyboard())
+    await message.answer("Buyurtma oynasi:", reply_markup=main_keyboard(message.from_user.id))
 
 
 # ---------------------------------------------------------------- HTTP API
 
+async def get_catalog():
+    """(katalog, buyurtma_ochiqmi, boshlanish, tugash). Baza ulangan bo'lsa — bazadan."""
+    if db.pool is None:
+        return CATALOG, is_order_time_open(), open_str(), cutoff_str()
+    async with db.pool.acquire() as c:
+        rows = await c.fetch(
+            "select id,name,price,category from products where active order by sort,id")
+    cat: dict = {}
+    for r in rows:
+        cat.setdefault(r["category"], []).append(
+            {"id": r["id"], "name": r["name"], "price": r["price"]})
+    st = await api_v2.order_status()
+    return cat, st["order_open"], st["open_time"], st["cutoff_time"]
+
+
 async def handle_products(request: web.Request) -> web.Response:
+    cat, is_open, o, c = await get_catalog()
     return web.json_response(
-        {
-            "catalog": CATALOG,
-            "order_open": is_order_time_open(),
-            "open_from": open_str(),
-            "cutoff": cutoff_str(),
-        }
+        {"catalog": cat, "order_open": is_open, "open_from": o, "cutoff": c}
     )
 
 
@@ -104,7 +114,9 @@ async def handle_order(request: web.Request) -> web.Response:
         username = f"@{user['username']}" if user.get("username") else "—"
         user_id = user.get("id")
 
-    if not is_order_time_open():
+    cat, is_open, _o, _c = await get_catalog()
+    products_by_id = {p["id"]: p for plist in cat.values() for p in plist}
+    if not is_open:
         return web.json_response({"ok": False, "error": "closed"}, status=403)
 
     if not items:
@@ -114,7 +126,7 @@ async def handle_order(request: web.Request) -> web.Response:
     total_kg = 0.0
     total_dona = 0.0
     for item in items:
-        product = PRODUCTS_BY_ID.get(item.get("id"))
+        product = products_by_id.get(item.get("id"))
         if not product:
             continue
         qty = float(item.get("qty", 0))
