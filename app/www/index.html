@@ -90,10 +90,10 @@ async function api(path, o = {}) {
         try { d = await r.json(); } catch (e) {} }
   catch (e) { throw new Error("network"); }
   if (S.token && (r.status === 401 || d.error === "not_allowed")) { logout(); throw new Error("not_allowed"); }
-  if (!r.ok || d.ok === false) throw new Error(d.error || "network");
+  if (!r.ok || d.ok === false) { const er = new Error(d.error || "network"); er.detail = d.detail; throw er; }
   return d;
 }
-const say = e => ERR[e.message] || ("Xato: " + e.message);
+const say = e => (ERR[e.message] || ("Xato: " + e.message)) + (e.detail ? " [" + e.detail + "]" : "");
 function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
 function logout() { S.token = ""; S.user = null; localStorage.removeItem("tk"); localStorage.removeItem("us"); renderLogin(); }
 const saveCart = () => localStorage.setItem("cart", JSON.stringify(S.cart));
