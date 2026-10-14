@@ -70,7 +70,7 @@ button,input,select,textarea{font:inherit}
 <div id="app"></div>
 <script>
 // ====== SOZLAMA: o'z Render manzilingizni yozing (oxirida "/" siz) ======
-const API_BASE = location.hostname === "localhost" ? "https://zakas-bot-0xkk.onrender.com" : location.origin;
+const API_BASE = location.hostname === "localhost" ? "https://zakas-bot.onrender.com" : location.origin;
 // =======================================================================
 
 const ERR = {
@@ -85,7 +85,7 @@ const ERR = {
   limit_full: "Buyurtma limiti to'ldi.", min_kg: "Bu avto uchun minimal hajm to'lmagan.", bad_vehicle: "Avtomobil tanlanmagan.",
   daily_limit: "Bu kunga zakas berib bo'lgansiz. Yana kerak bo'lsa ＋ tugmasi orqali adminga yozing.",
   weekly_limit: "Bu avtomobil shu haftada ishlatilgan (haftada 1 marta). ＋ tugmasi orqali adminga yozing.",
-  empty_text: "Xabar yozing."
+  empty_text: "Xabar yozing.", day_closed: "Bu kunga zakas qabul qilinmaydi."
 };
 const WD = ["Ya","Du","Se","Cho","Pa","Ju","Sh"];
 const $ = (s, r = document) => r.querySelector(s);
@@ -168,12 +168,13 @@ async function start() {
   }
 }
 function days() {
-  const out = [], t = new Date();
-  for (let i = 0; i < 8; i++) { const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + i);
-    out.push({ i, d, key: ld(d), off: d.getDay() === 0 || (i === 0 && !S.status.order_open) }); }
+  const out = [], t = new Date(), od = S.status.order_days;  // od: admin belgilagan kunlar (null — belgilanmagan)
+  for (let i = 0; i < 14; i++) { const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + i), key = ld(d);
+    if (od ? !od.includes(key) : i >= 8) continue;
+    out.push({ i, d, key, off: (!od && d.getDay() === 0) || (i === 0 && !S.status.order_open) }); }
   return out;
 }
-function pickDate() { const ds = days(); if (!ds.find(x => x.key === S.date && !x.off)) { const x = ds.find(d => d.i >= 1 && !d.off) || ds.find(d => !d.off); S.date = x ? x.key : ds[1].key; } }
+function pickDate() { const ds = days(); if (!ds.find(x => x.key === S.date && !x.off)) { const x = ds.find(d => d.i >= 1 && !d.off) || ds.find(d => !d.off); S.date = x ? x.key : null; } }
 
 function shell() {
   $("#app").innerHTML = `<div id="view"></div><div class="nav" id="nav"></div>`;
@@ -182,11 +183,16 @@ function shell() {
 }
 function navUpdate() {
   const n = Object.keys(S.cart).length, t = S.tab === "menu" ? "home" : S.tab;
-  const items = [["home","🚚","Avto"],["cart","🛒","Savat"],["hist","🕘","Tarix"]];
-  if (S.user && S.user.is_admin) items.push(["ctl","📊","Kontrol"], ["adm","⚙️","Sozlamalar"]);
+  const items = [["home","🚚","Avto"],["cart","🛒","Savat"],["hist","🕘","Tarix"],["ctl","📊","Kontrol"]];
+  if (S.user && S.user.is_admin) items.push(["adm","⚙️","Sozlamalar"]);
   $("#nav").innerHTML = items.map(([k, ic, l]) => `<button data-t="${k}" class="${t === k ? "on" : ""}"><i>${ic}</i>${l}${k === "cart" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
 }
-function show(t) { S.tab = t; navUpdate(); $("#view").onclick = null; $("#view").onchange = null; ({ home: viewHome, menu: viewMenu, cart: viewCart, hist: viewHist, ctl: viewControl, adm: viewAdmin })[t](); window.scrollTo(0, 0); }
+function show(t) {
+  if (t === "home" && S.vehicle) {  // savatda mahsulot bor — avtoni almashtirib bo'lmaydi, to'g'ri menyuga
+    if (Object.keys(S.cart).length) t = "menu";
+    else { S.vehicle = null; S.cart = {}; localStorage.removeItem("veh"); }  // bo'sh savat — qayta tanlash mumkin
+  }
+  S.tab = t; navUpdate(); $("#view").onclick = null; $("#view").onchange = null; ({ home: viewHome, menu: viewMenu, cart: viewCart, hist: viewHist, ctl: viewControl, adm: viewAdmin })[t](); window.scrollTo(0, 0); }
 
 // ---------------------------------------------------------------- MENYU
 function viewHome() {
@@ -198,13 +204,13 @@ function viewHome() {
 }
 function drawVeh() {
   const el = $("#vl"); if (!el) return;
-  el.innerHTML = Object.entries(VEH).map(([k, v]) => { const n = Object.keys(S.carts[k] || {}).length;
-    return `<div class="vcard" data-v="${k}"><div class="vimg"><img src="${v.img}" alt="${v.name}" onerror="this.style.display='none'">${n ? `<span class="badge vb">${n}</span>` : ""}</div>
+  el.innerHTML = Object.entries(VEH).map(([k, v]) => {
+    return `<div class="vcard" data-v="${k}"><div class="vimg"><img src="${v.img}" alt="${v.name}" onerror="this.style.display='none'"></div>
     <div class="vin"><b>${v.name}</b><div class="mut">${v.info}</div>${S.grants[k] ? `<div class="gb">Sizga qo'shimcha: ${S.grants[k]} ta</div>` : ""}</div></div>`; }).join("");
   el.onclick = e => { const c = e.target.closest(".vcard"); if (c) pickVehicle(c.dataset.v); };
 }
 function pickVehicle(k) {
-  S.vehicle = k; localStorage.setItem("veh", k); S.cart = S.carts[k] || (S.carts[k] = {});
+  S.vehicle = k; localStorage.setItem("veh", k); S.carts = { [k]: {} }; S.cart = S.carts[k]; saveCart();
   show("menu");
 }
 function plusDialog() {
@@ -228,16 +234,17 @@ function updateLim() {
 function viewMenu() {
   if (!S.vehicle) return show("home");
   const v = VEH[S.vehicle];
-  $("#view").innerHTML = `<div class="hdr"><div style="display:flex;align-items:center;gap:10px"><button class="back" id="bk">‹</button><div><small>${esc(S.user.name)}</small><b>🚚 ${v.name}</b></div></div>
+  $("#view").innerHTML = `<div class="hdr"><div><small>${esc(S.user.name)}</small><b>🚚 ${v.name}</b></div>
     <div class="lim"><div class="bar"><i id="lb"></i></div><span id="lt"></span></div>
     <input id="q" class="search" placeholder="Mahsulot qidirish…" value="${esc(S.q)}"></div>
     <div class="row" id="days"></div><div class="row" id="cats"></div><div class="grid" id="grid"></div>`;
-  $("#bk").onclick = () => show("home");
   $("#q").oninput = e => { S.q = e.target.value; grid(); };
   drawDays(); drawCats(); grid(); updateLim();
 }
 function drawDays() {
-  $("#days").innerHTML = days().map(x => `<div class="day ${x.key === S.date ? "on" : ""} ${x.off ? "off" : ""}" data-d="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b></div>`).join("");
+  const ds = days();
+  if (!ds.length) { $("#days").innerHTML = `<div class="mut" style="padding:10px 4px">Admin hali zakas kunlarini belgilamagan.</div>`; return; }
+  $("#days").innerHTML = ds.map(x => `<div class="day ${x.key === S.date ? "on" : ""} ${x.off ? "off" : ""}" data-d="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b></div>`).join("");
   $("#days").onclick = e => { const d = e.target.closest(".day"); if (d && !d.classList.contains("off")) { S.date = d.dataset.d; drawDays(); } };
 }
 function drawCats() {
@@ -246,42 +253,43 @@ function drawCats() {
 }
 function grid() {
   const q = S.q.trim().toLowerCase();
-  const list = q ? Object.values(S.catalog).flat().filter(p => p.name.toLowerCase().includes(q)) : (S.catalog[S.cat] || []);
+  const base = S.catalog[S.cat] || [];  // qidiruv faqat tanlangan kategoriya ichida
+  const list = q ? base.filter(p => p.name.toLowerCase().includes(q)) : base;
   const g = $("#grid");
   g.innerHTML = list.length ? list.map(card).join("") : `<div class="load" style="grid-column:1/3">Hech narsa topilmadi</div>`;
-  g.onclick = gridClick; g.onchange = gridChange;
+  g.onclick = gridClick; g.onchange = gridChange; g.onfocusin = e => { if (e.target.tagName === "INPUT") try { e.target.select(); } catch (er) {} };
 }
 function card(p) {
   const c = S.cart[p.id], u = c ? c.unit : "kg";
-  return `<div class="card" data-id="${p.id}">
+  return `<div class="card" data-id="${p.id}" data-unit="${u}">
     <div class="img" data-img="${p.id}" style="${p.image ? `background-image:url('${esc(p.image)}')` : ""}">${p.image ? "" : "🥩"}</div>
     <div class="in"><div class="nm">${esc(clean(p.name))}</div><div class="pr">${fmt(p.price)} so'm/${u}</div>
-    <div class="qty"><button data-m="-">−</button><input type="number" inputmode="decimal" min="0" step="any" value="${c ? c.qty : 0}"><button data-m="+">+</button></div>
+    <div class="qty"><button data-m="-">−</button><input type="number" inputmode="decimal" min="0" step="any" value="${c ? c.qty : ""}" placeholder="0"><button data-m="+">+</button></div>
     <div class="unit" data-u="1">${u} ⇄</div></div></div>`;
 }
 const prod = id => Object.values(S.catalog).flat().find(p => p.id == id);
-function setQty(id, qty, unit) {
+function setQty(id, qty, unit, quiet) {
   qty = Math.max(0, Math.round(qty * 100) / 100);
   const old = S.cart[id], u = unit || (old ? old.unit : "kg");
   const next = Object.assign({}, S.cart); if (qty <= 0) delete next[id]; else next[id] = { qty, unit: u };
   if (S.vehicle) { const mx = VEH[S.vehicle].max;
     if (r2(eqKg(next)) > mx + 1e-9) { const left = Math.max(0, r2(mx - eqKg(S.cart)));
-      toast("Buyurtma limiti to'ldi" + (left > 0 ? ` (yana ${left} kg sig'adi)` : "")); return false; } }
+      if (!quiet) toast("Buyurtma limiti to'ldi" + (left > 0 ? ` (yana ${left} kg sig'adi)` : "")); return false; } }
   if (qty <= 0) delete S.cart[id]; else S.cart[id] = { qty, unit: u };
   saveCart(); navUpdate(); updateLim(); return true;
 }
-const cardUnit = cd => $(".unit", cd).textContent.startsWith("dona") ? "dona" : "kg";
+const cardUnit = cd => cd.dataset.unit === "dona" ? "dona" : "kg";
 function gridClick(e) {
   const cd = e.target.closest(".card"); if (!cd) return; const id = +cd.dataset.id, c = S.cart[id], inp = $("input", cd);
   const m = e.target.closest("[data-m]");
-  if (m) { const v = +(inp.value || 0) + (m.dataset.m === "+" ? 1 : -1); setQty(id, v, cardUnit(cd)); inp.value = S.cart[id] ? S.cart[id].qty : 0; return; }
-  if (e.target.closest("[data-u]")) { const u = cardUnit(cd) === "kg" ? "dona" : "kg";
-    if (c || +inp.value > 0) { if (!setQty(id, c ? c.qty : +inp.value, u)) return; }
-    $(".unit", cd).textContent = u + " ⇄"; $(".pr", cd).textContent = `${fmt(prod(id).price)} so'm/${u}`; return; }
+  if (m) { const v = (parseFloat(inp.value) || 0) + (m.dataset.m === "+" ? 1 : -1); setQty(id, v, cardUnit(cd)); inp.value = S.cart[id] ? S.cart[id].qty : ""; return; }
+  if (e.target.closest("[data-u]")) { const u = cardUnit(cd) === "kg" ? "dona" : "kg", qv = c ? c.qty : (parseFloat(inp.value) || 0);
+    if (qv > 0 && !setQty(id, qv, u, true)) { toast(`${u === "kg" ? "Kg" : "Dona"} ga o'tkazsangiz limitdan oshadi. Avval miqdorni kamaytiring.`); return; }
+    cd.dataset.unit = u; $(".unit", cd).textContent = u + " ⇄"; $(".pr", cd).textContent = `${fmt(prod(id).price)} so'm/${u}`; return; }
   if (e.target.closest("[data-img]")) viewer(id);
 }
 function gridChange(e) { if (e.target.tagName !== "INPUT") return; const cd = e.target.closest(".card"), id = +cd.dataset.id;
-  setQty(id, parseFloat(String(e.target.value).replace(",", ".")) || 0, cardUnit(cd)); e.target.value = S.cart[id] ? S.cart[id].qty : 0; }
+  setQty(id, parseFloat(String(e.target.value).replace(",", ".")) || 0, cardUnit(cd)); e.target.value = S.cart[id] ? S.cart[id].qty : ""; }
 
 // ---------------------------------------------------------------- RASM KO'RISH / ALMASHTIRISH
 function viewer(id) {
@@ -319,13 +327,16 @@ function viewCart() {
       <button data-x="1" style="width:auto;padding:0 12px;color:#c00">🗑</button></div></div>`; }).join("");
   const eq = r2(eqKg(S.cart)), low = V.min && eq < V.min;
   $("#view").innerHTML = `<div class="page"><h2>Savat · ${V.name}</h2>${rows || `<div class="load">Savat bo'sh</div>`}
-    ${ids.length ? `<div class="box"><div class="line"><span>Sana</span><b>${S.date.split("-").reverse().join(".")}</b></div>
+    ${ids.length ? `<div class="box"><div class="line"><span>Sana</span><b>${S.date ? S.date.split("-").reverse().join(".") : "—"}</b></div>
       <div class="line"><span>Jami</span><b>${kg ? kg + " kg" : ""} ${dona ? dona + " dona" : ""}</b></div>
       <div class="line"><span>Hajm</span><b>${eq} / ${V.max} kg</b></div>
       <div class="line"><span>Taxminiy summa</span><b>${fmt(sum)} so'm</b></div></div>
       ${low ? `<div class="err">${V.name} uchun kamida ${V.min} kg kerak (hozir ${eq} kg).</div>` : ""}
       ${S.status.order_open ? "" : `<div class="err">Buyurtma ${S.status.open_time}–${S.status.cutoff_time} oralig'ida qabul qilinadi.</div>`}
-      <button class="btn" id="send" ${low ? "disabled" : ""}>Buyurtma yuborish</button>` : ""}</div>`;
+      ${S.date ? "" : `<div class="err">Admin hali zakas kunlarini belgilamagan.</div>`}
+      <button class="btn" id="send" ${low || !S.date ? "disabled" : ""}>Buyurtma yuborish</button>
+      <button class="btn gray" id="clr" style="margin-top:8px">Savatni tozalash</button>` : ""}</div>`;
+  if ($("#clr")) $("#clr").onclick = () => { if (confirm("Savat tozalansinmi? Avtomobilni qayta tanlash mumkin bo'ladi.")) { S.cart = {}; saveCart(); navUpdate(); viewCart(); } };
   $("#view").onclick = e => { const b = e.target.closest(".box"); if (!b || !b.dataset.id) return; const id = b.dataset.id, c = S.cart[id];
     if (e.target.closest("[data-x]")) { delete S.cart[id]; saveCart(); navUpdate(); viewCart(); }
     else if (e.target.closest("[data-m]")) { setQty(id, c.qty + (e.target.closest("[data-m]").dataset.m === "+" ? 1 : -1)); viewCart(); } };
@@ -351,29 +362,31 @@ async function viewHist() {
 
 // ---------------------------------------------------------------- KONTROL (admin)
 async function viewControl() {
-  $("#view").innerHTML = `<div class="page"><h2>Kontrol</h2><input id="cdt" type="date" class="inp" value="${S.cdate || S.date}"><div id="cb" class="load">Yuklanmoqda…</div></div>`;
+  $("#view").innerHTML = `<div class="page"><h2>Kontrol</h2><input id="cdt" type="date" class="inp" value="${S.cdate || S.date || ld(new Date())}"><div id="cb" class="load">Yuklanmoqda…</div></div>`;
   const load = async () => {
     S.cdate = $("#cdt").value; const el = $("#cb"), K = Object.keys(VEH);
     try {
-      const r = await api("/admin/control?date=" + S.cdate);
+      const r = await api("/control?date=" + S.cdate), adm = !!r.users;
       const cell = c => c.n ? `<b>${r2(c.kg)}</b>${c.n > 1 ? `<small> ×${c.n}</small>` : ""}` : "—";
       el.className = "";
       el.innerHTML = `<div class="tw"><table class="tb"><tr><th>Filial</th>${K.map(k => `<th>${VEH[k].name}</th>`).join("")}</tr>
         ${r.rows.length ? r.rows.map(x => `<tr><td>${esc(x.name)}</td>${K.map(k => `<td>${cell(x[k])}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="4" class="mut">Bu sanaga zakas yo'q</td></tr>`}
         <tr class="tot"><td>Jami, kg</td>${K.map(k => `<td>${r2(r.totals[k])}</td>`).join("")}</tr></table></div>
         <div class="line"><b>Umumiy jami</b><b>${r2(r.totals.all)} kg</b></div>
-        <div class="box" style="margin-top:12px"><b>Avto qo'shib berish</b><div class="mut">Foydalanuvchiga tanlangan avtodan qo'shimcha 1 ta zakas huquqi beriladi (istalgan kunga, bir marta ishlatiladi).</div>
+        ${adm ? `<div class="box" style="margin-top:12px"><b>Avto qo'shib berish</b><div class="mut">Foydalanuvchiga tanlangan avtodan qo'shimcha 1 ta zakas huquqi beriladi (istalgan kunga, bir marta ishlatiladi).</div>
           <select id="gu" class="inp">${r.users.map(u => `<option value="${u.id}">${esc(u.name)} · ${u.phone}</option>`).join("")}</select>
           <select id="gv" class="inp">${K.map(k => `<option value="${k}">${VEH[k].name}</option>`).join("")}</select>
           <button class="btn sm" id="ga">Qo'shib berish</button></div>
         ${r.grants.length ? `<div class="box"><b>Berilgan, hali ishlatilmagan</b>${r.grants.map(g => `<div class="line"><span>${esc(g.name)} · ${VEH[g.vehicle] ? VEH[g.vehicle].name : esc(g.vehicle)}</span><button class="btn sm gray" data-gd="${g.id}">✕</button></div>`).join("")}</div>` : ""}
         <h3 style="margin:16px 0 8px">So'rovlar (＋)</h3>
         ${r.requests.length ? r.requests.map(q => `<div class="box"><div class="line"><b>${esc(q.name)}</b><span class="mut">${q.created_at}</span></div><div>${esc(q.text)}</div>
-          <button class="btn sm gray" style="margin-top:8px" data-ru="${q.user_id}">Avto qo'shish</button></div>`).join("") : `<div class="mut">So'rov yo'q</div>`}`;
-      $("#ga").onclick = async () => { try { await api("/admin/grants", { body: { user_id: +$("#gu").value, vehicle: $("#gv").value } }); toast("Qo'shildi"); load(); } catch (e) { toast(say(e)); } };
-      el.onclick = async e => { const d = e.target.closest("[data-gd]"), q = e.target.closest("[data-ru]");
-        if (d) { try { await api("/admin/grants/" + d.dataset.gd, { method: "DELETE" }); load(); } catch (er) { toast(say(er)); } }
-        else if (q) { $("#gu").value = q.dataset.ru; $("#gu").scrollIntoView({ block: "center" }); } };
+          <button class="btn sm gray" style="margin-top:8px" data-ru="${q.user_id}">Avto qo'shish</button></div>`).join("") : `<div class="mut">So'rov yo'q</div>`}` : ""}`;
+      if (adm) {
+        $("#ga").onclick = async () => { try { await api("/admin/grants", { body: { user_id: +$("#gu").value, vehicle: $("#gv").value } }); toast("Qo'shildi"); load(); } catch (e) { toast(say(e)); } };
+        el.onclick = async e => { const d = e.target.closest("[data-gd]"), q = e.target.closest("[data-ru]");
+          if (d) { try { await api("/admin/grants/" + d.dataset.gd, { method: "DELETE" }); load(); } catch (er) { toast(say(er)); } }
+          else if (q) { $("#gu").value = q.dataset.ru; $("#gu").scrollIntoView({ block: "center" }); } };
+      }
     } catch (e) { el.className = "err"; el.textContent = say(e); }
   };
   $("#cdt").onchange = load; load();
@@ -381,12 +394,12 @@ async function viewControl() {
 
 // ---------------------------------------------------------------- ADMIN
 function viewAdmin() {
-  const T = [["users","Foydalanuvchilar"],["prices","Narxlar"],["time","Vaqt"],["orders","Buyurtmalar"]];
+  const T = [["users","Foydalanuvchilar"],["prices","Narxlar"],["time","Vaqt"],["days","Kunlar"],["orders","Buyurtmalar"]];
   $("#view").innerHTML = `<div class="page"><h2>Sozlamalar</h2><div class="tabs">${T.map(([k, l]) => `<button class="chip ${S.adminTab === k ? "on" : ""}" data-a="${k}">${l}</button>`).join("")}</div>
     <div id="ad"></div><button class="btn gray" style="margin-top:20px" id="lo">Chiqish</button></div>`;
   $(".tabs").onclick = e => { const b = e.target.closest("[data-a]"); if (b) { S.adminTab = b.dataset.a; viewAdmin(); } };
   $("#lo").onclick = () => { if (confirm("Hisobdan chiqasizmi?")) logout(); };
-  ({ users: admUsers, prices: admPrices, time: admTime, orders: admOrders })[S.adminTab]();
+  ({ users: admUsers, prices: admPrices, time: admTime, days: admDays, orders: admOrders })[S.adminTab]();
 }
 async function admUsers() {
   const el = $("#ad"); el.innerHTML = `<div class="load">Yuklanmoqda…</div>`;
@@ -436,13 +449,30 @@ async function admTime() {
     $("#ts").onclick = async () => { try { const r = await api("/admin/settings", { body: { open_time: $("#t1").value, cutoff_time: $("#t2").value } }); Object.assign(S.status, r); toast("Saqlandi"); } catch (e) { toast(say(e)); } };
   } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
 }
+async function admDays() {
+  const el = $("#ad"); el.innerHTML = `<div class="load">Yuklanmoqda…</div>`;
+  try {
+    const s = await api("/admin/settings"), sel = new Set(s.order_days || []), t = new Date(), ds = [];
+    for (let i = 0; i < 14; i++) { const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + i); ds.push({ i, d, key: ld(d) }); }
+    const draw = () => { el.innerHTML = `<div class="box"><b>Zakas qabul qilinadigan kunlar</b>
+      <div class="mut">${s.order_days ? "Foydalanuvchilar faqat belgilangan kunlarga zakas bera oladi." : "Hali belgilanmagan: hozir Yakshanbadan boshqa kunlar ochiq. Saqlasangiz faqat tanlangan kunlar ochiq bo'ladi."}</div>
+      <div id="dg" style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">${ds.map(x => `<div class="day ${sel.has(x.key) ? "on" : ""}" data-k="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b><small>${String(x.d.getMonth() + 1).padStart(2, "0")}</small></div>`).join("")}</div>
+      <button class="btn" id="dsv">Saqlash</button></div>`;
+      $("#dg").onclick = e => { const d = e.target.closest("[data-k]"); if (!d) return; sel.has(d.dataset.k) ? sel.delete(d.dataset.k) : sel.add(d.dataset.k); d.classList.toggle("on"); };
+      $("#dsv").onclick = async () => { try { const r = await api("/admin/settings", { body: { order_days: [...sel] } }); Object.assign(S.status, r); s.order_days = r.order_days; pickDate(); toast("Saqlandi"); draw(); } catch (e) { toast(say(e)); } }; };
+    draw();
+  } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
+}
 async function admOrders() {
-  const el = $("#ad"); el.innerHTML = `<input id="od" type="date" class="inp" value="${S.date}"><div id="ol" class="load">Yuklanmoqda…</div>`;
+  const el = $("#ad"); el.innerHTML = `<input id="od" type="date" class="inp" value="${S.date || ld(new Date())}"><div id="ol" class="load">Yuklanmoqda…</div>`;
   const load = async () => { try { const { orders } = await api("/admin/orders?date=" + $("#od").value);
       $("#ol").className = ""; $("#ol").innerHTML = orders.length ? orders.map(o => `<div class="box"><b>#${o.id} · ${esc(o.user)}${o.vehicle && VEH[o.vehicle] ? " · " + VEH[o.vehicle].name : ""}</b><div class="mut">${o.created_at}</div>
         ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
-        <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Bu sanaga buyurtma yo'q</div>`;
+        <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div>
+        <button class="btn sm gray" style="margin-top:8px;color:#c00" data-del="${o.id}">🗑 O'chirish</button></div>`).join("") : `<div class="load">Bu sanaga buyurtma yo'q</div>`;
     } catch (e) { $("#ol").textContent = say(e); } };
+  $("#ol").onclick = async e => { const b = e.target.closest("[data-del]"); if (!b || !confirm(`#${b.dataset.del} buyurtma o'chirilsinmi?`)) return;
+    try { await api("/admin/orders/" + b.dataset.del, { method: "DELETE" }); toast("O'chirildi"); load(); } catch (er) { toast(say(er)); } };
   $("#od").onchange = load; load();
 }
 
