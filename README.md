@@ -34,7 +34,7 @@ tayyorlangan — narxi bo'lgan **377 ta mahsulot**, 13 ta kategoriya bo'yicha.
    - `ORDER_CUTOFF_MINUTE` = `0`
    - `TIMEZONE` = `Asia/Tashkent`
 6. **Deploy** tugmasini bosing. Deploy tugagach, Render sizga URL beradi
-   (masalan `https://zakas-bot.onrender.com`).
+   (masalan `https://zakas-bot-0xkk.onrender.com`).
 7. Shu URL'ni **WEBAPP_URL** environment o'zgaruvchisiga qo'yib, qayta deploy qiling
    (Render buni "Manual Deploy" orqali qiladi).
 
