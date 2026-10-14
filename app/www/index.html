@@ -9,7 +9,7 @@
 :root{--red:#b00d30;--red2:#c4143a;--bg:#f6f4f3;--card:#fff;--tx:#222;--mut:#8a8583;--line:#ece8e6}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;font-family:system-ui,-apple-system,Roboto,sans-serif;background:var(--bg);color:var(--tx);padding-top:env(safe-area-inset-top)}
-button,input,select{font:inherit}
+button,input,select,textarea{font:inherit}
 .hdr{background:linear-gradient(180deg,var(--red2),var(--red));color:#fff;padding:14px 16px 16px}
 .hdr small{opacity:.8;display:block}.hdr b{font-size:20px}
 .search{margin-top:10px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.35);border-radius:14px;padding:11px 14px;width:100%;color:#fff;outline:0}
@@ -50,6 +50,20 @@ button,input,select{font:inherit}
 .ov img{max-width:100%;max-height:70vh;border-radius:12px}
 .toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:12px;z-index:30;max-width:90%}
 .load{text-align:center;color:var(--mut);padding:40px 20px}
+.vcard{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:14px}
+.vimg{position:relative;background:#fff;height:170px;display:flex;align-items:center;justify-content:center;padding:8px}
+.vimg img{max-width:100%;max-height:100%;object-fit:contain}
+.vb{position:absolute;top:10px;right:12px;font-size:13px;padding:2px 8px}
+.vin{padding:10px 14px 14px;border-top:1px solid var(--line)}.vin b{font-size:18px}
+.gb{color:var(--red);font-weight:600;margin-top:4px;font-size:13px}
+.fab{position:fixed;right:18px;bottom:84px;width:58px;height:58px;border-radius:50%;background:var(--red);color:#fff;border:0;font-size:34px;line-height:1;box-shadow:0 6px 16px rgba(176,13,48,.4);z-index:6}
+.back{background:rgba(255,255,255,.2);border:0;color:#fff;border-radius:12px;width:38px;height:38px;font-size:24px}
+.lim{margin-top:10px;display:flex;align-items:center;gap:10px;font-size:13px}
+.bar{flex:1;height:8px;background:rgba(255,255,255,.3);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:#fff;width:0}.lim.full #lt{font-weight:700}
+.tw{overflow-x:auto}.tb{width:100%;border-collapse:collapse;background:#fff;border-radius:12px}
+.tb th,.tb td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:center;font-size:14px}
+.tb td:first-child,.tb th:first-child{text-align:left}.tb .tot td{font-weight:700;background:#f6f4f3}
 </style>
 </head>
 <body>
@@ -67,7 +81,11 @@ const ERR = {
   bad_input: "Ism va to'liq telefon raqam (9 ta raqam) kiriting.", bad_excel: "Excel faylni o'qib bo'lmadi.",
   empty_excel: "Excelda mahsulot/narx topilmadi.", no_file: "Fayl tanlanmadi.", bad_time: "Vaqt noto'g'ri (SS:DD).",
   network: "Internetga ulanib bo'lmadi. Server uyg'onayotgan bo'lishi mumkin, qayta urinib ko'ring.",
-  upload_failed: "Rasm yuklanmadi.", storage_not_configured: "Rasm saqlash sozlanmagan."
+  upload_failed: "Rasm yuklanmadi.", storage_not_configured: "Rasm saqlash sozlanmagan.",
+  limit_full: "Buyurtma limiti to'ldi.", min_kg: "Bu avto uchun minimal hajm to'lmagan.", bad_vehicle: "Avtomobil tanlanmagan.",
+  daily_limit: "Bu kunga zakas berib bo'lgansiz. Yana kerak bo'lsa ＋ tugmasi orqali adminga yozing.",
+  weekly_limit: "Bu avtomobil shu haftada ishlatilgan (haftada 1 marta). ＋ tugmasi orqali adminga yozing.",
+  empty_text: "Xabar yozing."
 };
 const WD = ["Ya","Du","Se","Cho","Pa","Ju","Sh"];
 const $ = (s, r = document) => r.querySelector(s);
@@ -76,9 +94,19 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 const clean = n => n.replace(/\s*\*[^*]*\*\s*$/, "").trim();
 const ld = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 
+const VEH = {
+  labo: { name: "Labo", max: 1000, min: 0, img: "img/labo.jpg", info: "Maksimal 1 tonna" },
+  shinaray: { name: "Shinaray", max: 2200, min: 0, img: "img/shinaray.jpg", info: "Maksimal 2 200 kg · 1 filialga haftada 1 marta" },
+  isuzi: { name: "Isuzi", max: 10000, min: 3000, img: "img/isuzi.jpg", info: "3 tonnadan 10 tonnagacha · 1 filialga haftada 1 marta" }
+};
+const DONA_KG = 0.4;
+const r2 = n => Math.round(n * 100) / 100;
+const eqKg = cart => Object.values(cart).reduce((s, c) => s + (c.unit === "dona" ? c.qty * DONA_KG : c.qty), 0);
 const S = { token: localStorage.getItem("tk") || "", user: JSON.parse(localStorage.getItem("us") || "null"),
-  catalog: {}, cat: null, q: "", date: null, tab: "menu", cart: JSON.parse(localStorage.getItem("cart") || "{}"),
-  status: {}, adminTab: "users" };
+  catalog: {}, cat: null, q: "", date: null, tab: "home", cart: {}, vehicle: localStorage.getItem("veh") || null, carts: JSON.parse(localStorage.getItem("carts") || "{}"), grants: {},
+  status: {}, adminTab: "users", cdate: null };
+if (!VEH[S.vehicle]) S.vehicle = null;
+S.cart = S.vehicle ? (S.carts[S.vehicle] = S.carts[S.vehicle] || {}) : {};
 
 async function api(path, o = {}) {
   const h = {}; let body = o.body;
@@ -95,8 +123,8 @@ async function api(path, o = {}) {
 }
 const say = e => (ERR[e.message] || ("Xato: " + e.message)) + (e.detail ? " [" + e.detail + "]" : "");
 function toast(t) { const d = document.createElement("div"); d.className = "toast"; d.textContent = t; document.body.appendChild(d); setTimeout(() => d.remove(), 2600); }
-function logout() { S.token = ""; S.user = null; localStorage.removeItem("tk"); localStorage.removeItem("us"); renderLogin(); }
-const saveCart = () => localStorage.setItem("cart", JSON.stringify(S.cart));
+function logout() { S.token = ""; S.user = null; S.vehicle = null; localStorage.removeItem("veh"); localStorage.removeItem("tk"); localStorage.removeItem("us"); renderLogin(); }
+const saveCart = () => { if (S.vehicle) S.carts[S.vehicle] = S.cart; localStorage.setItem("carts", JSON.stringify(S.carts)); };
 
 // ---------------------------------------------------------------- KIRISH
 function renderLogin(step = "phone", phone = "") {
@@ -131,6 +159,7 @@ async function start() {
   $("#app").innerHTML = `<div class="load">Yuklanmoqda…<br><span class="mut">Birinchi ochilishda 30–60 soniya kutish mumkin</span></div>`;
   try {
     const r = await api("/products"); S.catalog = r.catalog; S.status = r;
+    try { S.grants = (await api("/vehicles")).grants || {}; } catch (e) {}
     S.cat = S.cat && S.catalog[S.cat] ? S.cat : Object.keys(S.catalog)[0];
     pickDate(); shell(); show(S.tab);
   } catch (e) {
@@ -152,20 +181,60 @@ function shell() {
   navUpdate();
 }
 function navUpdate() {
-  const n = Object.keys(S.cart).length, t = S.tab;
-  const items = [["menu","🏠","Menyu"],["cart","🛒","Savat"],["hist","🕘","Tarix"]];
-  if (S.user && S.user.is_admin) items.push(["adm","⚙️","Sozlamalar"]);
+  const n = Object.keys(S.cart).length, t = S.tab === "menu" ? "home" : S.tab;
+  const items = [["home","🚚","Avto"],["cart","🛒","Savat"],["hist","🕘","Tarix"]];
+  if (S.user && S.user.is_admin) items.push(["ctl","📊","Kontrol"], ["adm","⚙️","Sozlamalar"]);
   $("#nav").innerHTML = items.map(([k, ic, l]) => `<button data-t="${k}" class="${t === k ? "on" : ""}"><i>${ic}</i>${l}${k === "cart" && n ? `<span class="badge">${n}</span>` : ""}</button>`).join("");
 }
-function show(t) { S.tab = t; navUpdate(); ({ menu: viewMenu, cart: viewCart, hist: viewHist, adm: viewAdmin })[t](); window.scrollTo(0, 0); }
+function show(t) { S.tab = t; navUpdate(); $("#view").onclick = null; $("#view").onchange = null; ({ home: viewHome, menu: viewMenu, cart: viewCart, hist: viewHist, ctl: viewControl, adm: viewAdmin })[t](); window.scrollTo(0, 0); }
 
 // ---------------------------------------------------------------- MENYU
+function viewHome() {
+  $("#view").innerHTML = `<div class="hdr"><small>Xush kelibsiz,</small><b>${esc(S.user.name)}</b></div>
+    <div class="page" style="padding-top:14px"><h2>Avtomobilni tanlang</h2><div id="vl"></div></div>
+    <button class="fab" id="plus" aria-label="Qo'shimcha avto so'rash">＋</button>`;
+  drawVeh(); $("#plus").onclick = plusDialog;
+  api("/vehicles").then(r => { S.grants = r.grants || {}; drawVeh(); }).catch(() => {});
+}
+function drawVeh() {
+  const el = $("#vl"); if (!el) return;
+  el.innerHTML = Object.entries(VEH).map(([k, v]) => { const n = Object.keys(S.carts[k] || {}).length;
+    return `<div class="vcard" data-v="${k}"><div class="vimg"><img src="${v.img}" alt="${v.name}" onerror="this.style.display='none'">${n ? `<span class="badge vb">${n}</span>` : ""}</div>
+    <div class="vin"><b>${v.name}</b><div class="mut">${v.info}</div>${S.grants[k] ? `<div class="gb">Sizga qo'shimcha: ${S.grants[k]} ta</div>` : ""}</div></div>`; }).join("");
+  el.onclick = e => { const c = e.target.closest(".vcard"); if (c) pickVehicle(c.dataset.v); };
+}
+function pickVehicle(k) {
+  S.vehicle = k; localStorage.setItem("veh", k); S.cart = S.carts[k] || (S.carts[k] = {});
+  show("menu");
+}
+function plusDialog() {
+  const ov = document.createElement("div"); ov.className = "ov";
+  ov.innerHTML = `<div class="box" style="color:#222;width:100%;max-width:420px;text-align:left"><b>Qo'shimcha avto so'rash</b>
+    <div class="mut">Masalan: «Ertaga 2 ta Labo kerak». Xabar adminga sizning nomingizdan boradi.</div>
+    <textarea id="pm" class="inp" rows="4" placeholder="Xabar yozing…"></textarea>
+    <div style="display:flex;gap:8px"><button class="btn gray" id="pc">Bekor</button><button class="btn" id="pg">Yuborish</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.onclick = e => { if (e.target === ov || e.target.id === "pc") ov.remove(); };
+  $("#pg", ov).onclick = async () => { const t = $("#pm", ov).value.trim(); if (!t) return toast(ERR.empty_text);
+    $("#pg", ov).disabled = true;
+    try { await api("/request", { body: { text: t } }); ov.remove(); toast("✅ So'rov yuborildi"); }
+    catch (e) { toast(say(e)); $("#pg", ov).disabled = false; } };
+}
+function updateLim() {
+  const t = $("#lt"); if (!t || !S.vehicle) return; const v = VEH[S.vehicle], kg = r2(eqKg(S.cart));
+  t.textContent = `${kg} / ${v.max} kg` + (v.min ? ` (kamida ${v.min})` : "");
+  $("#lb").style.width = Math.min(100, kg / v.max * 100) + "%"; t.parentNode.classList.toggle("full", kg >= v.max - 1e-9);
+}
 function viewMenu() {
-  $("#view").innerHTML = `<div class="hdr"><small>Xush kelibsiz,</small><b>${esc(S.user.name)}</b>
+  if (!S.vehicle) return show("home");
+  const v = VEH[S.vehicle];
+  $("#view").innerHTML = `<div class="hdr"><div style="display:flex;align-items:center;gap:10px"><button class="back" id="bk">‹</button><div><small>${esc(S.user.name)}</small><b>🚚 ${v.name}</b></div></div>
+    <div class="lim"><div class="bar"><i id="lb"></i></div><span id="lt"></span></div>
     <input id="q" class="search" placeholder="Mahsulot qidirish…" value="${esc(S.q)}"></div>
     <div class="row" id="days"></div><div class="row" id="cats"></div><div class="grid" id="grid"></div>`;
+  $("#bk").onclick = () => show("home");
   $("#q").oninput = e => { S.q = e.target.value; grid(); };
-  drawDays(); drawCats(); grid();
+  drawDays(); drawCats(); grid(); updateLim();
 }
 function drawDays() {
   $("#days").innerHTML = days().map(x => `<div class="day ${x.key === S.date ? "on" : ""} ${x.off ? "off" : ""}" data-d="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b></div>`).join("");
@@ -193,18 +262,26 @@ function card(p) {
 const prod = id => Object.values(S.catalog).flat().find(p => p.id == id);
 function setQty(id, qty, unit) {
   qty = Math.max(0, Math.round(qty * 100) / 100);
-  if (qty <= 0) delete S.cart[id]; else S.cart[id] = { qty, unit: unit || (S.cart[id] ? S.cart[id].unit : "kg") };
-  saveCart(); navUpdate();
+  const old = S.cart[id], u = unit || (old ? old.unit : "kg");
+  const next = Object.assign({}, S.cart); if (qty <= 0) delete next[id]; else next[id] = { qty, unit: u };
+  if (S.vehicle) { const mx = VEH[S.vehicle].max;
+    if (r2(eqKg(next)) > mx + 1e-9) { const left = Math.max(0, r2(mx - eqKg(S.cart)));
+      toast("Buyurtma limiti to'ldi" + (left > 0 ? ` (yana ${left} kg sig'adi)` : "")); return false; } }
+  if (qty <= 0) delete S.cart[id]; else S.cart[id] = { qty, unit: u };
+  saveCart(); navUpdate(); updateLim(); return true;
 }
+const cardUnit = cd => $(".unit", cd).textContent.startsWith("dona") ? "dona" : "kg";
 function gridClick(e) {
-  const cd = e.target.closest(".card"); if (!cd) return; const id = +cd.dataset.id, c = S.cart[id];
+  const cd = e.target.closest(".card"); if (!cd) return; const id = +cd.dataset.id, c = S.cart[id], inp = $("input", cd);
   const m = e.target.closest("[data-m]");
-  if (m) { const inp = $("input", cd); const v = +(inp.value || 0) + (m.dataset.m === "+" ? 1 : -1); setQty(id, v); inp.value = Math.max(0, v); return; }
-  if (e.target.closest("[data-u]")) { const u = (c ? c.unit : "kg") === "kg" ? "dona" : "kg"; if (c) c.unit = u; else if (+$("input", cd).value > 0) setQty(id, +$("input", cd).value, u);
-    $(".unit", cd).textContent = u + " ⇄"; $(".pr", cd).textContent = `${fmt(prod(id).price)} so'm/${u}`; saveCart(); return; }
+  if (m) { const v = +(inp.value || 0) + (m.dataset.m === "+" ? 1 : -1); setQty(id, v, cardUnit(cd)); inp.value = S.cart[id] ? S.cart[id].qty : 0; return; }
+  if (e.target.closest("[data-u]")) { const u = cardUnit(cd) === "kg" ? "dona" : "kg";
+    if (c || +inp.value > 0) { if (!setQty(id, c ? c.qty : +inp.value, u)) return; }
+    $(".unit", cd).textContent = u + " ⇄"; $(".pr", cd).textContent = `${fmt(prod(id).price)} so'm/${u}`; return; }
   if (e.target.closest("[data-img]")) viewer(id);
 }
-function gridChange(e) { if (e.target.tagName !== "INPUT") return; const cd = e.target.closest(".card"); setQty(+cd.dataset.id, parseFloat(String(e.target.value).replace(",", ".")) || 0); }
+function gridChange(e) { if (e.target.tagName !== "INPUT") return; const cd = e.target.closest(".card"), id = +cd.dataset.id;
+  setQty(id, parseFloat(String(e.target.value).replace(",", ".")) || 0, cardUnit(cd)); e.target.value = S.cart[id] ? S.cart[id].qty : 0; }
 
 // ---------------------------------------------------------------- RASM KO'RISH / ALMASHTIRISH
 function viewer(id) {
@@ -233,25 +310,29 @@ function shrink(file, max) {
 
 // ---------------------------------------------------------------- SAVAT
 function viewCart() {
-  const ids = Object.keys(S.cart);
+  if (!S.vehicle) { $("#view").innerHTML = `<div class="page"><h2>Savat</h2><div class="load">Avval avtomobilni tanlang</div><button class="btn" id="gh">Avtomobil tanlash</button></div>`; $("#gh").onclick = () => show("home"); return; }
+  const V = VEH[S.vehicle], ids = Object.keys(S.cart);
   let kg = 0, dona = 0, sum = 0;
   const rows = ids.map(id => { const p = prod(id), c = S.cart[id]; if (!p) return ""; sum += p.price * c.qty; c.unit === "kg" ? kg += c.qty : dona += c.qty;
     return `<div class="box" data-id="${id}"><b>${esc(clean(p.name))}</b><div class="mut">${fmt(p.price)} so'm/${c.unit}</div>
       <div class="qty" style="margin-top:8px"><button data-m="-">−</button><input type="number" inputmode="decimal" value="${c.qty}"><button data-m="+">+</button>
       <button data-x="1" style="width:auto;padding:0 12px;color:#c00">🗑</button></div></div>`; }).join("");
-  $("#view").innerHTML = `<div class="page"><h2>Savat</h2>${rows || `<div class="load">Savat bo'sh</div>`}
+  const eq = r2(eqKg(S.cart)), low = V.min && eq < V.min;
+  $("#view").innerHTML = `<div class="page"><h2>Savat · ${V.name}</h2>${rows || `<div class="load">Savat bo'sh</div>`}
     ${ids.length ? `<div class="box"><div class="line"><span>Sana</span><b>${S.date.split("-").reverse().join(".")}</b></div>
       <div class="line"><span>Jami</span><b>${kg ? kg + " kg" : ""} ${dona ? dona + " dona" : ""}</b></div>
+      <div class="line"><span>Hajm</span><b>${eq} / ${V.max} kg</b></div>
       <div class="line"><span>Taxminiy summa</span><b>${fmt(sum)} so'm</b></div></div>
+      ${low ? `<div class="err">${V.name} uchun kamida ${V.min} kg kerak (hozir ${eq} kg).</div>` : ""}
       ${S.status.order_open ? "" : `<div class="err">Buyurtma ${S.status.open_time}–${S.status.cutoff_time} oralig'ida qabul qilinadi.</div>`}
-      <button class="btn" id="send">Buyurtma yuborish</button>` : ""}</div>`;
-  $("#view").onclick = e => { const b = e.target.closest(".box"); if (!b) return; const id = b.dataset.id, inp = $("input", b), c = S.cart[id];
+      <button class="btn" id="send" ${low ? "disabled" : ""}>Buyurtma yuborish</button>` : ""}</div>`;
+  $("#view").onclick = e => { const b = e.target.closest(".box"); if (!b || !b.dataset.id) return; const id = b.dataset.id, c = S.cart[id];
     if (e.target.closest("[data-x]")) { delete S.cart[id]; saveCart(); navUpdate(); viewCart(); }
     else if (e.target.closest("[data-m]")) { setQty(id, c.qty + (e.target.closest("[data-m]").dataset.m === "+" ? 1 : -1)); viewCart(); } };
   $("#view").onchange = e => { if (e.target.tagName === "INPUT") { setQty(e.target.closest(".box").dataset.id, parseFloat(String(e.target.value).replace(",", ".")) || 0); viewCart(); } };
   if ($("#send")) $("#send").onclick = async () => {
     $("#send").disabled = true;
-    try { await api("/order", { body: { date: S.date, items: ids.map(id => ({ id: +id, qty: S.cart[id].qty, unit: S.cart[id].unit })) } });
+    try { await api("/order", { body: { date: S.date, vehicle: S.vehicle, items: ids.map(id => ({ id: +id, qty: S.cart[id].qty, unit: S.cart[id].unit })) } });
       S.cart = {}; saveCart(); navUpdate(); toast("✅ Buyurtma yuborildi"); show("hist");
     } catch (e) { toast(say(e)); $("#send").disabled = false; if (e.message === "closed") refreshStatus(); }
   };
@@ -262,10 +343,40 @@ async function refreshStatus() { try { const r = await api("/products"); S.statu
 async function viewHist() {
   $("#view").innerHTML = `<div class="page"><h2>Tarix</h2><div class="load">Yuklanmoqda…</div></div>`;
   try { const r = await api("/orders");
-    $("#view .page").innerHTML = `<h2>Tarix</h2>` + (r.orders.length ? r.orders.map(o => `<div class="box"><div class="line"><b>#${o.id} · ${o.date.split("-").reverse().join(".")}</b><span class="mut">${o.created_at}</span></div>
+    $("#view .page").innerHTML = `<h2>Tarix</h2>` + (r.orders.length ? r.orders.map(o => `<div class="box"><div class="line"><b>#${o.id} · ${o.date.split("-").reverse().join(".")}${o.vehicle && VEH[o.vehicle] ? " · " + VEH[o.vehicle].name : ""}</b><span class="mut">${o.created_at}</span></div>
       ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
       <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Hali buyurtma yo'q</div>`);
   } catch (e) { $("#view .page").innerHTML += `<div class="err">${esc(say(e))}</div>`; }
+}
+
+// ---------------------------------------------------------------- KONTROL (admin)
+async function viewControl() {
+  $("#view").innerHTML = `<div class="page"><h2>Kontrol</h2><input id="cdt" type="date" class="inp" value="${S.cdate || S.date}"><div id="cb" class="load">Yuklanmoqda…</div></div>`;
+  const load = async () => {
+    S.cdate = $("#cdt").value; const el = $("#cb"), K = Object.keys(VEH);
+    try {
+      const r = await api("/admin/control?date=" + S.cdate);
+      const cell = c => c.n ? `<b>${r2(c.kg)}</b>${c.n > 1 ? `<small> ×${c.n}</small>` : ""}` : "—";
+      el.className = "";
+      el.innerHTML = `<div class="tw"><table class="tb"><tr><th>Filial</th>${K.map(k => `<th>${VEH[k].name}</th>`).join("")}</tr>
+        ${r.rows.length ? r.rows.map(x => `<tr><td>${esc(x.name)}</td>${K.map(k => `<td>${cell(x[k])}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="4" class="mut">Bu sanaga zakas yo'q</td></tr>`}
+        <tr class="tot"><td>Jami, kg</td>${K.map(k => `<td>${r2(r.totals[k])}</td>`).join("")}</tr></table></div>
+        <div class="line"><b>Umumiy jami</b><b>${r2(r.totals.all)} kg</b></div>
+        <div class="box" style="margin-top:12px"><b>Avto qo'shib berish</b><div class="mut">Foydalanuvchiga tanlangan avtodan qo'shimcha 1 ta zakas huquqi beriladi (istalgan kunga, bir marta ishlatiladi).</div>
+          <select id="gu" class="inp">${r.users.map(u => `<option value="${u.id}">${esc(u.name)} · ${u.phone}</option>`).join("")}</select>
+          <select id="gv" class="inp">${K.map(k => `<option value="${k}">${VEH[k].name}</option>`).join("")}</select>
+          <button class="btn sm" id="ga">Qo'shib berish</button></div>
+        ${r.grants.length ? `<div class="box"><b>Berilgan, hali ishlatilmagan</b>${r.grants.map(g => `<div class="line"><span>${esc(g.name)} · ${VEH[g.vehicle] ? VEH[g.vehicle].name : esc(g.vehicle)}</span><button class="btn sm gray" data-gd="${g.id}">✕</button></div>`).join("")}</div>` : ""}
+        <h3 style="margin:16px 0 8px">So'rovlar (＋)</h3>
+        ${r.requests.length ? r.requests.map(q => `<div class="box"><div class="line"><b>${esc(q.name)}</b><span class="mut">${q.created_at}</span></div><div>${esc(q.text)}</div>
+          <button class="btn sm gray" style="margin-top:8px" data-ru="${q.user_id}">Avto qo'shish</button></div>`).join("") : `<div class="mut">So'rov yo'q</div>`}`;
+      $("#ga").onclick = async () => { try { await api("/admin/grants", { body: { user_id: +$("#gu").value, vehicle: $("#gv").value } }); toast("Qo'shildi"); load(); } catch (e) { toast(say(e)); } };
+      el.onclick = async e => { const d = e.target.closest("[data-gd]"), q = e.target.closest("[data-ru]");
+        if (d) { try { await api("/admin/grants/" + d.dataset.gd, { method: "DELETE" }); load(); } catch (er) { toast(say(er)); } }
+        else if (q) { $("#gu").value = q.dataset.ru; $("#gu").scrollIntoView({ block: "center" }); } };
+    } catch (e) { el.className = "err"; el.textContent = say(e); }
+  };
+  $("#cdt").onchange = load; load();
 }
 
 // ---------------------------------------------------------------- ADMIN
@@ -328,7 +439,7 @@ async function admTime() {
 async function admOrders() {
   const el = $("#ad"); el.innerHTML = `<input id="od" type="date" class="inp" value="${S.date}"><div id="ol" class="load">Yuklanmoqda…</div>`;
   const load = async () => { try { const { orders } = await api("/admin/orders?date=" + $("#od").value);
-      $("#ol").className = ""; $("#ol").innerHTML = orders.length ? orders.map(o => `<div class="box"><b>#${o.id} · ${esc(o.user)}</b><div class="mut">${o.created_at}</div>
+      $("#ol").className = ""; $("#ol").innerHTML = orders.length ? orders.map(o => `<div class="box"><b>#${o.id} · ${esc(o.user)}${o.vehicle && VEH[o.vehicle] ? " · " + VEH[o.vehicle].name : ""}</b><div class="mut">${o.created_at}</div>
         ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
         <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Bu sanaga buyurtma yo'q</div>`;
     } catch (e) { $("#ol").textContent = say(e); } };
