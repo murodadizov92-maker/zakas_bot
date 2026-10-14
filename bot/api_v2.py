@@ -5,6 +5,7 @@ import html
 import io
 import json
 import logging
+import os
 import re
 import secrets
 import time
@@ -37,6 +38,64 @@ def eq_kg(items) -> float:
     return round(sum(i["qty"] * (DONA_KG if i.get("unit") == "dona" else 1) for i in items), 2)
 
 BOT = None  # main.py o'rnatadi
+
+
+def chat_ids() -> list:
+    """Zakaslar boradigan chatlar: ADMIN_CHAT_ID + (ixtiyoriy) GROUP_CHAT_ID — vergul bilan bir nechta."""
+    out = []
+    for x in [ADMIN_CHAT_ID] + os.getenv("GROUP_CHAT_ID", "").split(","):
+        try:
+            v = int(str(x).strip())
+        except (TypeError, ValueError):
+            continue
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def chunks(text: str, n: int = 3800) -> list:
+    out, cur = [], ""
+    for line in text.split("\n"):
+        if cur and len(cur) + len(line) + 1 > n:
+            out.append(cur.rstrip())
+            cur = ""
+        cur += line + "\n"
+    if cur.strip():
+        out.append(cur.rstrip())
+    return out
+
+
+async def notify(text: str):
+    if not BOT:
+        return
+    for cid in chat_ids():
+        for part in chunks(text):
+            try:
+                await BOT.send_message(cid, part, parse_mode="HTML")
+            except Exception as e:
+                log.warning("Telegramga (%s) yuborib bo'lmadi: %s", cid, e)
+
+
+def short_name(name: str) -> str:
+    return re.sub(r"\s*\*[^*]*\*\s*$", "", str(name)).strip()
+
+
+def order_text(oid, d, vname, vmax, u, items, kg, dona, eq) -> str:
+    """Zakas matni: mahsulotlar kategoriya bo'yicha ketma-ket taxlangan."""
+    head = (
+        f"🆕 <b>Yangi buyurtma #{oid}</b>\n"
+        f"📅 Sana: {d.strftime('%d.%m.%Y')}\n"
+        f"🚚 Avto: <b>{vname}</b>\n"
+        f"👤 {html.escape(u['name'])} (+998{u['phone']})\n"
+    )
+    body, cur = [], None
+    for it in items:  # items allaqachon kategoriya/tartib bo'yicha saralangan
+        if it["cat"] != cur:
+            cur = it["cat"]
+            body.append(f"\n📂 <b>{html.escape(cur)}</b>")
+        body.append(f"• {html.escape(short_name(it['name']))} — <b>{it['qty']:g} {it['unit']}</b>")
+    tail = f"\n\n<b>Jami:</b> {kg:g} kg, {dona:g} dona (≈ {eq:g} / {vmax} kg)"
+    return head + "\n".join(body) + tail
 TOKEN_TTL = 30 * 24 * 3600
 FAILS: dict[str, list[float]] = {}  # telefon -> xato urinishlar vaqti
 
@@ -98,7 +157,14 @@ async def order_status() -> dict:
     now = datetime.now(TIMEZONE)
     cur = now.hour * 60 + now.minute
     is_open = hhmm_to_min(s["open_time"]) <= cur < hhmm_to_min(s["cutoff_time"])
-    return {"open_time": s["open_time"], "cutoff_time": s["cutoff_time"], "order_open": is_open}
+    days = None  # None — admin hali kunlarni belgilamagan (Yakshanbadan boshqa hammasi ochiq)
+    if "order_days" in s:
+        try:
+            days = sorted({str(x) for x in json.loads(s["order_days"])})
+        except (ValueError, TypeError):
+            days = None
+    return {"open_time": s["open_time"], "cutoff_time": s["cutoff_time"], "order_open": is_open,
+            "order_days": days}
 
 
 def norm_name(s: str) -> str:
@@ -240,9 +306,11 @@ async def h_order(request):
         return err("bad_date")
     if d < today or d > today + timedelta(days=14):
         return err("bad_date")
+    if st["order_days"] is not None and d.isoformat() not in st["order_days"]:
+        return err("day_closed")
 
     async with db.pool.acquire() as c:
-        prods = {r["id"]: r for r in await c.fetch("select id,name,price from products where active")}
+        prods = {r["id"]: r for r in await c.fetch("select id,name,price,category,sort from products where active")}
     lines, items, kg, dona = [], [], 0.0, 0.0
     for it in data.get("items") or []:
         p = prods.get(it.get("id"))
@@ -255,10 +323,11 @@ async def h_order(request):
         unit = "dona" if it.get("unit") == "dona" else "kg"
         kg += qty if unit == "kg" else 0
         dona += qty if unit == "dona" else 0
-        items.append({"id": p["id"], "name": p["name"], "price": p["price"], "qty": qty, "unit": unit})
-        lines.append(f"• {p['name']} — {qty:g} {unit} ({p['price']:,} so'm/{unit})".replace(",", " "))
+        items.append({"id": p["id"], "name": p["name"], "price": p["price"], "qty": qty, "unit": unit,
+                      "cat": p["category"]})
     if not items:
         return err("empty_order")
+    items.sort(key=lambda x: (prods[x["id"]]["sort"], x["id"]))  # kategoriya va katalog tartibida
 
     eq = eq_kg(items)
     if eq > V["max_kg"] + 1e-6:
@@ -294,19 +363,7 @@ async def h_order(request):
             if grant_id is not None:
                 await c.execute("update grants set used_order_id=$1 where id=$2", oid, grant_id)
 
-    if ADMIN_CHAT_ID and BOT:
-        try:
-            text = (
-                f"🆕 <b>Yangi buyurtma #{oid}</b> (ilova)\n"
-                f"📅 Sana: {d.strftime('%d.%m.%Y')}\n"
-                f"🚚 Avto: <b>{V['name']}</b>\n"
-                f"👤 {html.escape(u['name'])} (+998{u['phone']})\n\n"
-                f"<b>Mahsulotlar:</b>\n" + "\n".join(html.escape(x) for x in lines) + "\n\n"
-                f"<b>Jami:</b> {kg:g} kg, {dona:g} dona (≈ {eq:g} kg / {V['max_kg']} kg)"
-            )
-            await BOT.send_message(ADMIN_CHAT_ID, text, parse_mode="HTML")
-        except Exception as e:
-            log.warning("Telegramga yuborib bo'lmadi: %s", e)
+    await notify(order_text(oid, d, V['name'], V['max_kg'], u, items, kg, dona, eq))
     return web.json_response({"ok": True, "order_id": oid})
 
 
@@ -333,17 +390,12 @@ async def h_request(request):
         return err("empty_text")
     async with db.pool.acquire() as c:
         rid = await c.fetchval("insert into requests(user_id,text) values($1,$2) returning id", u["id"], text)
-    if ADMIN_CHAT_ID and BOT:
-        try:
-            msg = (
-                f"➕ <b>Qo'shimcha avto so'rovi #{rid}</b> (ilova)\n"
-                f"📅 Sana: {datetime.now(TIMEZONE).strftime('%d.%m.%Y %H:%M')}\n"
-                f"👤 {html.escape(u['name'])} (+998{u['phone']})\n\n"
-                f"<b>Xabar:</b>\n{html.escape(text)}"
-            )
-            await BOT.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
-        except Exception as e:
-            log.warning("Telegramga yuborib bo'lmadi: %s", e)
+    await notify(
+        f"➕ <b>Qo'shimcha avto so'rovi #{rid}</b>\n"
+        f"📅 Sana: {datetime.now(TIMEZONE).strftime('%d.%m.%Y %H:%M')}\n"
+        f"👤 {html.escape(u['name'])} (+998{u['phone']})\n\n"
+        f"<b>Xabar:</b>\n{html.escape(text)}"
+    )
     return web.json_response({"ok": True, "id": rid})
 
 
@@ -595,41 +647,71 @@ async def h_settings_set(request):
                     "insert into settings(key,value) values($1,$2) "
                     "on conflict (key) do update set value=excluded.value", key, v,
                 )
+        if "order_days" in data:  # zakas qabul qilinadigan kunlar (admin belgilaydi)
+            raw = data["order_days"]
+            if not isinstance(raw, list):
+                return err("bad_input")
+            try:
+                days = sorted({datetime.strptime(str(x), "%Y-%m-%d").date().isoformat() for x in raw})
+            except ValueError:
+                return err("bad_date")
+            await c.execute(
+                "insert into settings(key,value) values('order_days',$1) "
+                "on conflict (key) do update set value=excluded.value", json.dumps(days),
+            )
     return web.json_response({"ok": True, **(await order_status())})
 
 
 async def h_admin_orders(request):
     date = request.query.get("date")
+    d = None
+    if date:
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()  # asyncpg $1::date ga str emas, date kerak
+        except ValueError:
+            return err("bad_date")
     q = ("select o.*, u.name as uname, u.phone as uphone from orders o join users u on u.id=o.user_id "
-         + ("where o.order_date=$1::date " if date else "") + "order by o.id desc limit 200")
+         + ("where o.order_date=$1 " if d else "") + "order by o.id desc limit 200")
     async with db.pool.acquire() as c:
-        rows = await c.fetch(q, *( [date] if date else [] ))
+        rows = await c.fetch(q, *([d] if d else []))
     out = []
     for r in rows:
-        d = order_json(r)
-        d["user"] = f"{r['uname']} (+998{r['uphone']})"
-        out.append(d)
+        x = order_json(r)
+        x["user"] = f"{r['uname']} (+998{r['uphone']})"
+        out.append(x)
     return web.json_response({"ok": True, "orders": out})
 
 
-async def h_admin_control(request):
-    """Kontrol: sana bo'yicha filial × avto jadvali (kg), jami, so'rovlar va berilgan huquqlar."""
+async def h_order_del(request):
+    oid = int(request.match_info["id"])
+    async with db.pool.acquire() as c:
+        async with c.transaction():
+            r = await c.fetchval("delete from orders where id=$1 returning id", oid)
+            if r:  # zakas qo'shimcha huquq bilan berilgan bo'lsa, huquq qaytariladi
+                await c.execute("update grants set used_order_id=null where used_order_id=$1", oid)
+    return web.json_response({"ok": True}) if r else err("not_found", 404)
+
+
+async def h_control(request):
+    """Kontrol: filial × avto jadvali (kg) — hamma foydalanuvchiga. So'rovlar/huquqlar — faqat adminga."""
     date = request.query.get("date") or datetime.now(TIMEZONE).date().isoformat()
     try:
         d = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         return err("bad_date")
+    is_admin = bool(request["user"]["is_admin"])
     async with db.pool.acquire() as c:
         orders = await c.fetch(
             "select o.id,o.user_id,o.vehicle,o.items,u.name,u.phone from orders o "
             "join users u on u.id=o.user_id where o.order_date=$1 order by o.id", d)
-        users = await c.fetch("select id,name,phone from users where active order by name")
-        grants = await c.fetch(
-            "select g.id,g.user_id,g.vehicle,u.name from grants g join users u on u.id=g.user_id "
-            "where g.used_order_id is null order by g.id desc")
-        reqs = await c.fetch(
-            "select r.id,r.user_id,r.text,r.created_at,u.name from requests r "
-            "join users u on u.id=r.user_id order by r.id desc limit 30")
+        if is_admin:
+            users = await c.fetch("select id,name,phone from users where active order by name")
+            grants = await c.fetch(
+                "select g.id,g.user_id,g.vehicle,u.name from grants g join users u on u.id=g.user_id "
+                "where g.used_order_id is null order by g.id desc")
+            reqs = await c.fetch(
+                "select r.id,r.user_id,r.text,r.created_at,u.name from requests r "
+                "join users u on u.id=r.user_id order by r.id desc limit 30")
     rows: dict[int, dict] = {}
     totals = {k: 0.0 for k in VEHICLES}
     for o in orders:
@@ -639,20 +721,24 @@ async def h_admin_control(request):
         items = json.loads(o["items"]) if isinstance(o["items"], str) else o["items"]
         kg = eq_kg(items)
         row = rows.setdefault(o["user_id"], {
-            "user_id": o["user_id"], "name": o["name"], "phone": "+998" + o["phone"],
+            "user_id": o["user_id"], "name": o["name"],
             **{k: {"kg": 0.0, "n": 0} for k in VEHICLES},
         })
         row[v]["kg"] = round(row[v]["kg"] + kg, 2)
         row[v]["n"] += 1
         totals[v] = round(totals[v] + kg, 2)
     totals["all"] = round(sum(totals.values()), 2)
-    return web.json_response({
-        "ok": True, "date": d.isoformat(), "rows": list(rows.values()), "totals": totals,
-        "users": [{"id": x["id"], "name": x["name"], "phone": "+998" + x["phone"]} for x in users],
-        "grants": [{"id": g["id"], "user_id": g["user_id"], "name": g["name"], "vehicle": g["vehicle"]} for g in grants],
-        "requests": [{"id": q["id"], "user_id": q["user_id"], "name": q["name"], "text": q["text"],
-                      "created_at": q["created_at"].astimezone(TIMEZONE).strftime("%d.%m %H:%M")} for q in reqs],
-    })
+    out = {"ok": True, "date": d.isoformat(), "rows": list(rows.values()), "totals": totals}
+    if is_admin:
+        out.update({
+            "users": [{"id": x["id"], "name": x["name"], "phone": "+998" + x["phone"]} for x in users],
+            "grants": [{"id": g["id"], "user_id": g["user_id"], "name": g["name"], "vehicle": g["vehicle"]}
+                       for g in grants],
+            "requests": [{"id": q["id"], "user_id": q["user_id"], "name": q["name"], "text": q["text"],
+                          "created_at": q["created_at"].astimezone(TIMEZONE).strftime("%d.%m %H:%M")}
+                         for q in reqs],
+        })
+    return web.json_response(out)
 
 
 async def h_grant_add(request):
@@ -720,6 +806,7 @@ def add_routes(app: web.Application):
     r.add_get("/api/v2/admin/orders", h_admin_orders)
     r.add_get("/api/v2/vehicles", h_vehicles)
     r.add_post("/api/v2/request", h_request)
-    r.add_get("/api/v2/admin/control", h_admin_control)
+    r.add_get("/api/v2/control", h_control)
+    r.add_delete("/api/v2/admin/orders/{id}", h_order_del)
     r.add_post("/api/v2/admin/grants", h_grant_add)
     r.add_delete("/api/v2/admin/grants/{id}", h_grant_del)
