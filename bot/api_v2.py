@@ -1,6 +1,7 @@
 """Android ilova uchun yangi API (/api/v2/...). Eski Telegram Mini App yo'llari (/api/products, /api/order) o'zgarmaydi."""
 import hashlib
 import hmac
+import html
 import io
 import json
 import logging
@@ -20,6 +21,20 @@ from config import (
 )
 
 log = logging.getLogger("zakas-api")
+
+# Avtomobillar: max_kg — bitta zakas hajmi chegarasi, min_kg — kamida shuncha bo'lishi shart,
+# weekly — bitta filial haftada faqat 1 marta (admin qo'shimcha bersa bundan tashqari ham mumkin)
+VEHICLES = {
+    "labo": {"name": "Labo", "max_kg": 1000, "min_kg": 0, "weekly": False},
+    "shinaray": {"name": "Shinaray", "max_kg": 2200, "min_kg": 0, "weekly": True},
+    "isuzi": {"name": "Isuzi", "max_kg": 10000, "min_kg": 3000, "weekly": True},
+}
+DONA_KG = 0.4  # 1 dona = 0.4 kg
+
+
+def eq_kg(items) -> float:
+    """Zakasning kg dagi hajmi: kg lar o'z holicha, donalar × 0.4."""
+    return round(sum(i["qty"] * (DONA_KG if i.get("unit") == "dona" else 1) for i in items), 2)
 
 BOT = None  # main.py o'rnatadi
 TOKEN_TTL = 30 * 24 * 3600
@@ -213,6 +228,11 @@ async def h_order(request):
     if not st["order_open"]:
         return err("closed", 403)
 
+    veh = data.get("vehicle")
+    if veh not in VEHICLES:
+        return err("bad_vehicle")
+    V = VEHICLES[veh]
+
     today = datetime.now(TIMEZONE).date()
     try:
         d = datetime.strptime(str(data.get("date") or today.isoformat()), "%Y-%m-%d").date()
@@ -240,21 +260,49 @@ async def h_order(request):
     if not items:
         return err("empty_order")
 
+    eq = eq_kg(items)
+    if eq > V["max_kg"] + 1e-6:
+        return err("limit_full")
+    if eq < V["min_kg"]:
+        return err("min_kg")
+
     async with db.pool.acquire() as c:
-        oid = await c.fetchval(
-            "insert into orders(user_id,order_date,items,total_kg,total_dona) "
-            "values($1,$2,$3::jsonb,$4,$5) returning id",
-            u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona,
-        )
+        async with c.transaction():
+            await c.execute("select pg_advisory_xact_lock($1)", u["id"])  # bir foydalanuvchi — bir vaqtda bitta tekshiruv
+            # Oddiy huquq: kuniga 1 ta zakas; Shinaray/Isuzi uchun yana haftada 1 marta
+            day_used = (await c.fetchval(
+                "select count(*) from orders where user_id=$1 and order_date=$2 and grant_id is null",
+                u["id"], d)) > 0
+            week_used = False
+            if V["weekly"]:
+                ws = d - timedelta(days=d.weekday())
+                week_used = (await c.fetchval(
+                    "select count(*) from orders where user_id=$1 and vehicle=$2 and grant_id is null "
+                    "and order_date>=$3 and order_date<$4", u["id"], veh, ws, ws + timedelta(days=7))) > 0
+            grant_id = None
+            if day_used or week_used:  # oddiy huquq ishlatilgan — admin bergan qo'shimcha huquq kerak
+                grant_id = await c.fetchval(
+                    "select id from grants where user_id=$1 and vehicle=$2 and used_order_id is null "
+                    "order by id limit 1 for update", u["id"], veh)
+                if grant_id is None:
+                    return err("daily_limit" if day_used else "weekly_limit")
+            oid = await c.fetchval(
+                "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,grant_id) "
+                "values($1,$2,$3::jsonb,$4,$5,$6,$7) returning id",
+                u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona, veh, grant_id,
+            )
+            if grant_id is not None:
+                await c.execute("update grants set used_order_id=$1 where id=$2", oid, grant_id)
 
     if ADMIN_CHAT_ID and BOT:
         try:
             text = (
                 f"🆕 <b>Yangi buyurtma #{oid}</b> (ilova)\n"
                 f"📅 Sana: {d.strftime('%d.%m.%Y')}\n"
-                f"👤 {u['name']} (+998{u['phone']})\n\n"
-                f"<b>Mahsulotlar:</b>\n" + "\n".join(lines) + "\n\n"
-                f"<b>Jami:</b> {kg:g} kg, {dona:g} dona"
+                f"🚚 Avto: <b>{V['name']}</b>\n"
+                f"👤 {html.escape(u['name'])} (+998{u['phone']})\n\n"
+                f"<b>Mahsulotlar:</b>\n" + "\n".join(html.escape(x) for x in lines) + "\n\n"
+                f"<b>Jami:</b> {kg:g} kg, {dona:g} dona (≈ {eq:g} kg / {V['max_kg']} kg)"
             )
             await BOT.send_message(ADMIN_CHAT_ID, text, parse_mode="HTML")
         except Exception as e:
@@ -262,10 +310,47 @@ async def h_order(request):
     return web.json_response({"ok": True, "order_id": oid})
 
 
+async def h_vehicles(request):
+    """Avtomobillar sozlamasi + foydalanuvchiga admin bergan ishlatilmagan qo'shimcha huquqlar."""
+    async with db.pool.acquire() as c:
+        rows = await c.fetch(
+            "select vehicle, count(*) as n from grants where user_id=$1 and used_order_id is null group by vehicle",
+            request["user"]["id"])
+    return web.json_response({
+        "ok": True,
+        "vehicles": {k: {"name": v["name"], "max_kg": v["max_kg"], "min_kg": v["min_kg"], "weekly": v["weekly"]}
+                     for k, v in VEHICLES.items()},
+        "grants": {r["vehicle"]: r["n"] for r in rows},
+    })
+
+
+async def h_request(request):
+    """«＋» tugmasi: foydalanuvchi xabar yozadi — adminga o'sha foydalanuvchi nomidan zakas kabi boradi."""
+    u = request["user"]
+    data = await request.json()
+    text = str(data.get("text") or "").strip()[:1000]
+    if not text:
+        return err("empty_text")
+    async with db.pool.acquire() as c:
+        rid = await c.fetchval("insert into requests(user_id,text) values($1,$2) returning id", u["id"], text)
+    if ADMIN_CHAT_ID and BOT:
+        try:
+            msg = (
+                f"➕ <b>Qo'shimcha avto so'rovi #{rid}</b> (ilova)\n"
+                f"📅 Sana: {datetime.now(TIMEZONE).strftime('%d.%m.%Y %H:%M')}\n"
+                f"👤 {html.escape(u['name'])} (+998{u['phone']})\n\n"
+                f"<b>Xabar:</b>\n{html.escape(text)}"
+            )
+            await BOT.send_message(ADMIN_CHAT_ID, msg, parse_mode="HTML")
+        except Exception as e:
+            log.warning("Telegramga yuborib bo'lmadi: %s", e)
+    return web.json_response({"ok": True, "id": rid})
+
+
 async def h_my_orders(request):
     async with db.pool.acquire() as c:
         rows = await c.fetch(
-            "select id,order_date,created_at,items,total_kg,total_dona from orders "
+            "select id,order_date,created_at,items,total_kg,total_dona,vehicle from orders "
             "where user_id=$1 order by id desc limit 50", request["user"]["id"],
         )
     return web.json_response({"ok": True, "orders": [order_json(r) for r in rows]})
@@ -277,6 +362,7 @@ def order_json(r) -> dict:
         "created_at": r["created_at"].astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M"),
         "items": json.loads(r["items"]) if isinstance(r["items"], str) else r["items"],
         "total_kg": float(r["total_kg"]), "total_dona": float(r["total_dona"]),
+        "vehicle": r["vehicle"],
     }
 
 
@@ -526,6 +612,74 @@ async def h_admin_orders(request):
     return web.json_response({"ok": True, "orders": out})
 
 
+async def h_admin_control(request):
+    """Kontrol: sana bo'yicha filial × avto jadvali (kg), jami, so'rovlar va berilgan huquqlar."""
+    date = request.query.get("date") or datetime.now(TIMEZONE).date().isoformat()
+    try:
+        d = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        return err("bad_date")
+    async with db.pool.acquire() as c:
+        orders = await c.fetch(
+            "select o.id,o.user_id,o.vehicle,o.items,u.name,u.phone from orders o "
+            "join users u on u.id=o.user_id where o.order_date=$1 order by o.id", d)
+        users = await c.fetch("select id,name,phone from users where active order by name")
+        grants = await c.fetch(
+            "select g.id,g.user_id,g.vehicle,u.name from grants g join users u on u.id=g.user_id "
+            "where g.used_order_id is null order by g.id desc")
+        reqs = await c.fetch(
+            "select r.id,r.user_id,r.text,r.created_at,u.name from requests r "
+            "join users u on u.id=r.user_id order by r.id desc limit 30")
+    rows: dict[int, dict] = {}
+    totals = {k: 0.0 for k in VEHICLES}
+    for o in orders:
+        v = o["vehicle"]
+        if v not in VEHICLES:
+            continue  # eski (avtosiz) buyurtmalar «Buyurtmalar» bo'limida ko'rinadi
+        items = json.loads(o["items"]) if isinstance(o["items"], str) else o["items"]
+        kg = eq_kg(items)
+        row = rows.setdefault(o["user_id"], {
+            "user_id": o["user_id"], "name": o["name"], "phone": "+998" + o["phone"],
+            **{k: {"kg": 0.0, "n": 0} for k in VEHICLES},
+        })
+        row[v]["kg"] = round(row[v]["kg"] + kg, 2)
+        row[v]["n"] += 1
+        totals[v] = round(totals[v] + kg, 2)
+    totals["all"] = round(sum(totals.values()), 2)
+    return web.json_response({
+        "ok": True, "date": d.isoformat(), "rows": list(rows.values()), "totals": totals,
+        "users": [{"id": x["id"], "name": x["name"], "phone": "+998" + x["phone"]} for x in users],
+        "grants": [{"id": g["id"], "user_id": g["user_id"], "name": g["name"], "vehicle": g["vehicle"]} for g in grants],
+        "requests": [{"id": q["id"], "user_id": q["user_id"], "name": q["name"], "text": q["text"],
+                      "created_at": q["created_at"].astimezone(TIMEZONE).strftime("%d.%m %H:%M")} for q in reqs],
+    })
+
+
+async def h_grant_add(request):
+    data = await request.json()
+    veh = data.get("vehicle")
+    try:
+        uid = int(data.get("user_id"))
+        cnt = max(1, min(int(data.get("count") or 1), 5))
+    except (TypeError, ValueError):
+        return err("bad_input")
+    if veh not in VEHICLES:
+        return err("bad_vehicle")
+    async with db.pool.acquire() as c:
+        if not await c.fetchval("select 1 from users where id=$1", uid):
+            return err("not_found", 404)
+        for _ in range(cnt):
+            await c.execute("insert into grants(user_id,vehicle) values($1,$2)", uid, veh)
+    return web.json_response({"ok": True})
+
+
+async def h_grant_del(request):
+    gid = int(request.match_info["id"])
+    async with db.pool.acquire() as c:
+        r = await c.fetchval("delete from grants where id=$1 and used_order_id is null returning id", gid)
+    return web.json_response({"ok": True}) if r else err("not_found", 404)
+
+
 async def h_health(request):
     try:
         await db.ping()
@@ -564,3 +718,8 @@ def add_routes(app: web.Application):
     r.add_get("/api/v2/admin/settings", h_settings_get)
     r.add_post("/api/v2/admin/settings", h_settings_set)
     r.add_get("/api/v2/admin/orders", h_admin_orders)
+    r.add_get("/api/v2/vehicles", h_vehicles)
+    r.add_post("/api/v2/request", h_request)
+    r.add_get("/api/v2/admin/control", h_admin_control)
+    r.add_post("/api/v2/admin/grants", h_grant_add)
+    r.add_delete("/api/v2/admin/grants/{id}", h_grant_del)
