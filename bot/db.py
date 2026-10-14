@@ -52,6 +52,21 @@ create table if not exists settings(
   key text primary key,
   value text not null
 );
+alter table orders add column if not exists vehicle text;
+alter table orders add column if not exists grant_id integer;
+create table if not exists grants(
+  id serial primary key,
+  user_id integer not null references users(id) on delete cascade,
+  vehicle text not null,
+  created_at timestamptz not null default now(),
+  used_order_id integer
+);
+create table if not exists requests(
+  id serial primary key,
+  user_id integer not null references users(id) on delete cascade,
+  text text not null,
+  created_at timestamptz not null default now()
+);
 """
 
 
