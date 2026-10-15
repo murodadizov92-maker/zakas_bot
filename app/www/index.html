@@ -423,22 +423,29 @@ async function admPrices() {
   const el = $("#ad"); el.innerHTML = `<div class="load">Yuklanmoqda…</div>`;
   try {
     const { products } = await api("/admin/products");
-    el.innerHTML = `<div class="box"><b>Excel orqali narx yangilash</b><div class="mut">Fayl ustunlari: "Наименование/Nomi" va "Цена/Narx". Nomi bo'yicha topiladi.</div>
+    el.innerHTML = `<div class="box"><b>Excel orqali narx yangilash</b><div class="mut">Fayl ustunlari: "Наименование/Nomi", "Цена/Narx" va "Категория". Mahsulot nomi bo'yicha topiladi; narx va kategoriya yangilanadi.</div>
       <input id="xf" type="file" accept=".xlsx,.xlsm" class="inp"><label class="mut"><input type="checkbox" id="xn"> Topilmagan mahsulotlarni yangi qilib qo'shish</label>
       <button class="btn sm" id="xi" style="margin-top:8px">Import qilish</button><div id="xr" class="mut" style="margin-top:8px"></div></div>
       <input id="ps" class="inp" placeholder="Mahsulot qidirish…"><div id="pl"></div>`;
+    const cats = [...new Set(products.map(p => p.category))];
     const draw = () => { const q = $("#ps").value.trim().toLowerCase(); const l = products.filter(p => !q || p.name.toLowerCase().includes(q)).slice(0, 60);
-      $("#pl").innerHTML = l.map(p => `<div class="box" data-id="${p.id}"><div>${esc(clean(p.name))} <span class="mut">· ${esc(p.category)}</span></div>
+      $("#pl").innerHTML = l.map(p => `<div class="box" data-id="${p.id}"><div>${esc(clean(p.name))}</div>
+        <select class="inp" data-c="1" style="margin:6px 0">${cats.map(c => `<option ${c === p.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
         <div class="qty" style="margin-top:6px"><input type="number" inputmode="numeric" value="${p.price}"><button data-s="1" style="width:auto;padding:0 12px">💾</button>
         <button data-v="1" style="width:auto;padding:0 12px">${p.active ? "👁" : "🚫"}</button></div></div>`).join("") + (l.length === 60 ? `<div class="mut">Qidiruv orqali toraytiring…</div>` : ""); };
     draw(); $("#ps").oninput = draw;
+    $("#pl").onchange = async e => { const s = e.target.closest("[data-c]"); if (!s) return; const bx = s.closest(".box"), p = products.find(x => x.id == bx.dataset.id);
+      try { await api("/admin/products/" + p.id, { body: { category: s.value } }); p.category = s.value; toast("Kategoriya o'zgardi"); } catch (er) { toast(say(er)); s.value = p.category; } };
     $("#pl").onclick = async e => { const bx = e.target.closest(".box"); if (!bx) return; const id = bx.dataset.id, p = products.find(x => x.id == id);
       try { if (e.target.closest("[data-s]")) { p.price = +$("input", bx).value; await api("/admin/products/" + id, { body: { price: p.price } }); toast("Narx saqlandi"); }
         else if (e.target.closest("[data-v]")) { p.active = !p.active; await api("/admin/products/" + id, { body: { active: p.active } }); draw(); } } catch (er) { toast(say(er)); } };
     $("#xi").onclick = async () => { const f = $("#xf").files[0]; if (!f) return toast(ERR.no_file); const fd = new FormData(); fd.append("add_new", $("#xn").checked ? "1" : "0"); fd.append("file", f);
       $("#xr").textContent = "Yuklanmoqda…";
       try { const r = await api("/admin/import-excel", { body: fd });
-        $("#xr").innerHTML = `✅ Yangilandi: <b>${r.updated}</b> · O'zgarmagan: ${r.unchanged} · Qo'shildi: ${r.added} · Topilmadi: ${r.not_found_count}` + (r.not_found.length ? `<br>${r.not_found.map(esc).join("<br>")}` : "");
+        $("#xr").innerHTML = `✅ Narx yangilandi: <b>${r.updated}</b> · O'zgarmagan: ${r.unchanged} · Qo'shildi: ${r.added} · Topilmadi: ${r.not_found_count}<br>📂 Kategoriyasi o'zgardi: <b>${r.recategorized || 0}</b>`
+          + ((r.new_categories || []).length ? `<br>Yangi kategoriyalar: ${r.new_categories.map(esc).join(", ")}` : "")
+          + ((r.moved || []).length ? `<br><br>${r.moved.map(m => `${esc(clean(m.name))}: ${esc(m.from)} → <b>${esc(m.to)}</b>`).join("<br>")}` : "")
+          + (r.not_found.length ? `<br><br>Topilmadi:<br>${r.not_found.map(esc).join("<br>")}` : "");
       } catch (e) { $("#xr").textContent = say(e); } };
   } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
 }
