@@ -507,25 +507,40 @@ async def h_product_update(request):
     return web.json_response({"ok": True}) if r else err("not_found", 404)
 
 
-def parse_price_excel(raw: bytes) -> list[tuple[str, int]]:
-    """Excel'dan (nom, narx) juftliklarini oladi. Sarlavha qatorini o'zi topadi."""
+_HOMO = str.maketrans("АВЕКМНОРСТХаеорсх", "ABEKMHOPCTXaeopcx")  # kirill → o'xshash lotin harflar (ЕZOZ = EZOZ)
+
+
+def cat_key(s) -> str:
+    return re.sub(r"[\W_]+", "", str(s).translate(_HOMO).lower())
+
+
+def clean_cat(s) -> str:
+    return re.sub(r"\s+", " ", str(s).replace("*", " ")).strip()
+
+
+def parse_price_excel(raw: bytes) -> list:
+    """Excel'dan (nom, narx|None, kategoriya|None) qatorlarini oladi. Sarlavha qatorini o'zi topadi.
+    Narxsiz qatorlar ham olinadi (kategoriyani yangilash uchun), narxi esa None bo'ladi."""
     from openpyxl import load_workbook
     wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     ws = wb.active
     rows = [list(r) for r in ws.iter_rows(values_only=True)]
     name_keys = ("наимен", "номи", "nom", "name", "товар", "mahsulot", "product")
     price_keys = ("цена", "прайс", "narx", "price", "нарх", "стоим")
-    name_col = price_col = hdr = None
+    cat_keys = ("категор", "kategor", "categor", "группа", "guruh")
+    name_col = price_col = cat_col = hdr = None
     for i, row in enumerate(rows[:15]):
-        n = p = None
+        n = p = c = None
         for j, cell in enumerate(row):
             t = str(cell or "").lower()
             if n is None and any(k in t for k in name_keys):
                 n = j
-            if p is None and any(k in t for k in price_keys):
+            elif c is None and any(k in t for k in cat_keys):
+                c = j
+            elif p is None and any(k in t for k in price_keys):
                 p = j
         if n is not None and p is not None:
-            name_col, price_col, hdr = n, p, i
+            name_col, price_col, cat_col, hdr = n, p, c, i
             break
     if hdr is None:  # zaxira: birinchi matn ustuni va birinchi son ustuni
         hdr = 0
@@ -536,16 +551,56 @@ def parse_price_excel(raw: bytes) -> list[tuple[str, int]]:
     for row in rows[hdr + 1:]:
         if len(row) <= max(name_col, price_col):
             continue
-        name, price = row[name_col], row[price_col]
+        name = row[name_col]
         if not name:
             continue
         try:
-            price = int(round(float(str(price).replace(" ", "").replace(",", "."))))
+            price = int(round(float(str(row[price_col]).replace(" ", "").replace(",", "."))))
         except (TypeError, ValueError):
-            continue
-        if price > 0:
-            out.append((str(name).strip(), price))
+            price = None
+        if price is not None and price <= 0:
+            price = None
+        cat = None
+        if cat_col is not None and len(row) > cat_col and row[cat_col]:
+            cat = clean_cat(row[cat_col]) or None
+        out.append((str(name).strip(), price, cat))
     return out
+
+
+def plan_import(rows: list, existing: list, add_new: bool) -> dict:
+    """Import rejasi. existing: [{id,name,price,category}]. Mavjud mahsulotning kategoriyasi Excel'dagiga
+    yangilanadi (kategoriya nomi mavjud kategoriya bilan solishtiriladi: ЕZOZ = EZOZ)."""
+    by_name = {norm_name(r["name"]): r for r in existing}
+    cats = {cat_key(r["category"]): r["category"] for r in existing}
+    updates, inserts, missing, moved, new_cats = [], [], [], [], []
+    updated = unchanged = 0
+    for name, price, cat in rows:
+        target = None
+        if cat:
+            k = cat_key(cat)
+            if k not in cats:
+                cats[k] = cat
+                new_cats.append(cat)
+            target = cats[k]
+        r = by_name.get(norm_name(name))
+        if r:
+            new_price = price if (price and price != r["price"]) else None
+            new_cat = target if (target and target != r["category"]) else None
+            if new_price is not None:
+                updated += 1
+            elif new_cat is None:
+                unchanged += 1
+            if new_price is not None or new_cat is not None:
+                updates.append((r["id"], new_price, new_cat))
+            if new_cat is not None:
+                moved.append({"name": r["name"], "from": r["category"], "to": new_cat})
+        elif price:  # narxsiz va bazada yo'q mahsulotlar e'tiborga olinmaydi
+            if add_new:
+                inserts.append((name, price, target or "Прочие"))
+            else:
+                missing.append(name)
+    return {"updates": updates, "inserts": inserts, "missing": missing, "moved": moved,
+            "new_cats": new_cats, "updated": updated, "unchanged": unchanged}
 
 
 async def h_import_excel(request):
@@ -559,40 +614,33 @@ async def h_import_excel(request):
     if not raw:
         return err("no_file")
     try:
-        pairs = parse_price_excel(raw)
+        rows = parse_price_excel(raw)
     except Exception as e:
         log.warning("Excel o'qilmadi: %s", e)
         return err("bad_excel")
-    if not pairs:
+    if not rows:
         return err("empty_excel")
 
-    updated, unchanged, added, missing = 0, 0, 0, []
     async with db.pool.acquire() as c:
-        existing = {norm_name(r["name"]): r for r in await c.fetch("select id,name,price from products")}
+        existing = [dict(r) for r in await c.fetch("select id,name,price,category from products")]
+        plan = plan_import(rows, existing, add_new)
         next_id = (await c.fetchval("select coalesce(max(id),0) from products")) + 1
         next_sort = (await c.fetchval("select coalesce(max(sort),0) from products")) + 1
         async with c.transaction():
-            for name, price in pairs:
-                r = existing.get(norm_name(name))
-                if r:
-                    if r["price"] != price:
-                        await c.execute("update products set price=$1 where id=$2", price, r["id"])
-                        updated += 1
-                    else:
-                        unchanged += 1
-                elif add_new:
-                    await c.execute(
-                        "insert into products(id,name,price,category,sort) values($1,$2,$3,'Прочие',$4)",
-                        next_id, name, price, next_sort,
-                    )
-                    next_id += 1
-                    next_sort += 1
-                    added += 1
-                else:
-                    missing.append(name)
+            for pid, price, cat in plan["updates"]:
+                await c.execute(
+                    "update products set price=coalesce($1,price), category=coalesce($2,category) where id=$3",
+                    price, cat, pid)
+            for name, price, cat in plan["inserts"]:
+                await c.execute(
+                    "insert into products(id,name,price,category,sort) values($1,$2,$3,$4,$5)",
+                    next_id, name, price, cat, next_sort)
+                next_id += 1
+                next_sort += 1
     return web.json_response({
-        "ok": True, "updated": updated, "unchanged": unchanged, "added": added,
-        "not_found": missing[:50], "not_found_count": len(missing),
+        "ok": True, "updated": plan["updated"], "unchanged": plan["unchanged"], "added": len(plan["inserts"]),
+        "not_found": plan["missing"][:50], "not_found_count": len(plan["missing"]),
+        "recategorized": len(plan["moved"]), "moved": plan["moved"][:40], "new_categories": plan["new_cats"],
     })
 
 
