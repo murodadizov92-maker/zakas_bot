@@ -53,6 +53,8 @@ button,input,select,textarea{font:inherit}
 .vcard{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:14px}
 .vimg{position:relative;background:#fff;height:170px;display:flex;align-items:center;justify-content:center;padding:8px}
 .vimg img{max-width:100%;max-height:100%;object-fit:contain}
+.vcard.busy .vimg img{opacity:.3;filter:grayscale(1)}
+.vwarn{position:absolute;left:14px;right:14px;top:50%;transform:translateY(-50%);background:rgba(176,13,48,.93);color:#fff;font-weight:700;text-align:center;padding:10px 12px;border-radius:12px}
 .vb{position:absolute;top:10px;right:12px;font-size:13px;padding:2px 8px}
 .vin{padding:10px 14px 14px;border-top:1px solid var(--line)}.vin b{font-size:18px}
 .gb{color:var(--red);font-weight:600;margin-top:4px;font-size:13px}
@@ -85,7 +87,7 @@ const ERR = {
   limit_full: "Buyurtma limiti to'ldi.", min_kg: "Bu avto uchun minimal hajm to'lmagan.", bad_vehicle: "Avtomobil tanlanmagan.",
   daily_limit: "Bu kunga zakas berib bo'lgansiz. Yana kerak bo'lsa ＋ tugmasi orqali adminga yozing.",
   weekly_limit: "Bu avtomobil shu haftada ishlatilgan (haftada 1 marta). ＋ tugmasi orqali adminga yozing.",
-  empty_text: "Xabar yozing.", day_closed: "Bu kunga zakas qabul qilinmaydi."
+  empty_text: "Xabar yozing.", vehicle_taken: "Bu kunga bu avtomobilga boshqa filial buyurtma bergan. ＋ tugmasi orqali adminga yozing.", day_closed: "Bu kunga zakas qabul qilinmaydi."
 };
 const WD = ["Ya","Du","Se","Cho","Pa","Ju","Sh"];
 const $ = (s, r = document) => r.querySelector(s);
@@ -103,7 +105,7 @@ const DONA_KG = 0.4;
 const r2 = n => Math.round(n * 100) / 100;
 const eqKg = cart => Object.values(cart).reduce((s, c) => s + (c.unit === "dona" ? c.qty * DONA_KG : c.qty), 0);
 const S = { token: localStorage.getItem("tk") || "", user: JSON.parse(localStorage.getItem("us") || "null"),
-  catalog: {}, cat: null, q: "", date: null, tab: "home", cart: {}, vehicle: localStorage.getItem("veh") || null, carts: JSON.parse(localStorage.getItem("carts") || "{}"), grants: {},
+  catalog: {}, cat: null, q: "", date: null, tab: "home", cart: {}, vehicle: localStorage.getItem("veh") || null, carts: JSON.parse(localStorage.getItem("carts") || "{}"), grants: {}, busy: {},
   status: {}, adminTab: "users", cdate: null };
 if (!VEH[S.vehicle]) S.vehicle = null;
 S.cart = S.vehicle ? (S.carts[S.vehicle] = S.carts[S.vehicle] || {}) : {};
@@ -159,9 +161,8 @@ async function start() {
   $("#app").innerHTML = `<div class="load">Yuklanmoqda…<br><span class="mut">Birinchi ochilishda 30–60 soniya kutish mumkin</span></div>`;
   try {
     const r = await api("/products"); S.catalog = r.catalog; S.status = r;
-    try { S.grants = (await api("/vehicles")).grants || {}; } catch (e) {}
     S.cat = S.cat && S.catalog[S.cat] ? S.cat : Object.keys(S.catalog)[0];
-    pickDate(); shell(); show(S.tab);
+    pickDate(); await refreshVeh(); shell(); show(S.tab);
   } catch (e) {
     if (!S.token) return;
     $("#app").innerHTML = `<div class="load">${esc(say(e))}<br><br><button class="btn sm" onclick="start()">Qayta urinish</button></div>`;
@@ -197,19 +198,29 @@ function show(t) {
 // ---------------------------------------------------------------- MENYU
 function viewHome() {
   $("#view").innerHTML = `<div class="hdr"><small>Xush kelibsiz,</small><b>${esc(S.user.name)}</b></div>
-    <div class="page" style="padding-top:14px"><h2>Avtomobilni tanlang</h2><div id="vl"></div></div>
+    <div class="row" id="days" style="padding-top:12px"></div>
+    <div class="page" style="padding-top:6px"><h2>Avtomobilni tanlang</h2><div id="vl"></div></div>
     <button class="fab" id="plus" aria-label="Qo'shimcha avto so'rash">＋</button>`;
-  drawVeh(); $("#plus").onclick = plusDialog;
-  api("/vehicles").then(r => { S.grants = r.grants || {}; drawVeh(); }).catch(() => {});
+  drawDays(); drawVeh(); $("#plus").onclick = plusDialog; refreshVeh();
+}
+const isBusy = k => !!(S.busy[k] && !S.grants[k]);  // shu kunga boshqa filial olgan va menda qo'shimcha huquq yo'q
+async function refreshVeh() {
+  try { const r = await api("/vehicles" + (S.date ? "?date=" + S.date : "")); S.grants = r.grants || {}; S.busy = r.busy || {}; } catch (e) {}
+  drawVeh(); updateWarn();
+}
+function updateWarn() {
+  const el = $("#warn"); if (!el) return;
+  el.innerHTML = S.vehicle && isBusy(S.vehicle) ? `<div class="err" style="margin:8px 16px">⛔ ${VEH[S.vehicle].name}: bu kunga buyurtma bor. Boshqa kunni tanlang yoki ＋ orqali adminga yozing.</div>` : "";
 }
 function drawVeh() {
   const el = $("#vl"); if (!el) return;
-  el.innerHTML = Object.entries(VEH).map(([k, v]) => {
-    return `<div class="vcard" data-v="${k}"><div class="vimg"><img src="${v.img}" alt="${v.name}" onerror="this.style.display='none'"></div>
+  el.innerHTML = Object.entries(VEH).map(([k, v]) => { const busy = isBusy(k);
+    return `<div class="vcard ${busy ? "busy" : ""}" data-v="${k}"><div class="vimg"><img src="${v.img}" alt="${v.name}" onerror="this.style.display='none'">${busy ? `<div class="vwarn">⛔ Bu kunga buyurtma bor</div>` : ""}</div>
     <div class="vin"><b>${v.name}</b><div class="mut">${v.info}</div>${S.grants[k] ? `<div class="gb">Sizga qo'shimcha: ${S.grants[k]} ta</div>` : ""}</div></div>`; }).join("");
   el.onclick = e => { const c = e.target.closest(".vcard"); if (c) pickVehicle(c.dataset.v); };
 }
 function pickVehicle(k) {
+  if (isBusy(k)) return toast(ERR.vehicle_taken);
   S.vehicle = k; localStorage.setItem("veh", k); S.carts = { [k]: {} }; S.cart = S.carts[k]; saveCart();
   show("menu");
 }
@@ -237,15 +248,15 @@ function viewMenu() {
   $("#view").innerHTML = `<div class="hdr"><div><small>${esc(S.user.name)}</small><b>🚚 ${v.name}</b></div>
     <div class="lim"><div class="bar"><i id="lb"></i></div><span id="lt"></span></div>
     <input id="q" class="search" placeholder="Mahsulot qidirish…" value="${esc(S.q)}"></div>
-    <div class="row" id="days"></div><div class="row" id="cats"></div><div class="grid" id="grid"></div>`;
+    <div class="row" id="days"></div><div id="warn"></div><div class="row" id="cats"></div><div class="grid" id="grid"></div>`;
   $("#q").oninput = e => { S.q = e.target.value; grid(); };
-  drawDays(); drawCats(); grid(); updateLim();
+  drawDays(); drawCats(); grid(); updateLim(); updateWarn(); refreshVeh();
 }
 function drawDays() {
   const ds = days();
   if (!ds.length) { $("#days").innerHTML = `<div class="mut" style="padding:10px 4px">Admin hali zakas kunlarini belgilamagan.</div>`; return; }
   $("#days").innerHTML = ds.map(x => `<div class="day ${x.key === S.date ? "on" : ""} ${x.off ? "off" : ""}" data-d="${x.key}"><small>${x.i === 0 ? "Bugun" : x.i === 1 ? "Ertaga" : WD[x.d.getDay()]}</small><b>${x.d.getDate()}</b></div>`).join("");
-  $("#days").onclick = e => { const d = e.target.closest(".day"); if (d && !d.classList.contains("off")) { S.date = d.dataset.d; drawDays(); } };
+  $("#days").onclick = e => { const d = e.target.closest(".day"); if (d && !d.classList.contains("off")) { S.date = d.dataset.d; drawDays(); refreshVeh(); } };
 }
 function drawCats() {
   $("#cats").innerHTML = Object.keys(S.catalog).map(c => `<button class="chip ${c === S.cat ? "on" : ""}" data-c="${esc(c)}">${esc(c)}</button>`).join("");
@@ -325,7 +336,7 @@ function viewCart() {
     return `<div class="box" data-id="${id}"><b>${esc(clean(p.name))}</b><div class="mut">${fmt(p.price)} so'm/${c.unit}</div>
       <div class="qty" style="margin-top:8px"><button data-m="-">−</button><input type="number" inputmode="decimal" value="${c.qty}"><button data-m="+">+</button>
       <button data-x="1" style="width:auto;padding:0 12px;color:#c00">🗑</button></div></div>`; }).join("");
-  const eq = r2(eqKg(S.cart)), low = V.min && eq < V.min;
+  const eq = r2(eqKg(S.cart)), low = V.min && eq < V.min, busy = isBusy(S.vehicle);
   $("#view").innerHTML = `<div class="page"><h2>Savat · ${V.name}</h2>${rows || `<div class="load">Savat bo'sh</div>`}
     ${ids.length ? `<div class="box"><div class="line"><span>Sana</span><b>${S.date ? S.date.split("-").reverse().join(".") : "—"}</b></div>
       <div class="line"><span>Jami</span><b>${kg ? kg + " kg" : ""} ${dona ? dona + " dona" : ""}</b></div>
@@ -334,7 +345,8 @@ function viewCart() {
       ${low ? `<div class="err">${V.name} uchun kamida ${V.min} kg kerak (hozir ${eq} kg).</div>` : ""}
       ${S.status.order_open ? "" : `<div class="err">Buyurtma ${S.status.open_time}–${S.status.cutoff_time} oralig'ida qabul qilinadi.</div>`}
       ${S.date ? "" : `<div class="err">Admin hali zakas kunlarini belgilamagan.</div>`}
-      <button class="btn" id="send" ${low || !S.date ? "disabled" : ""}>Buyurtma yuborish</button>
+      ${busy ? `<div class="err">⛔ Bu kunga ${V.name} uchun buyurtma bor. Boshqa kunni tanlang yoki ＋ orqali adminga yozing.</div>` : ""}
+      <button class="btn" id="send" ${low || !S.date || busy ? "disabled" : ""}>Buyurtma yuborish</button>
       <button class="btn gray" id="clr" style="margin-top:8px">Savatni tozalash</button>` : ""}</div>`;
   if ($("#clr")) $("#clr").onclick = () => { if (confirm("Savat tozalansinmi? Avtomobilni qayta tanlash mumkin bo'ladi.")) { S.cart = {}; saveCart(); navUpdate(); viewCart(); } };
   $("#view").onclick = e => { const b = e.target.closest(".box"); if (!b || !b.dataset.id) return; const id = b.dataset.id, c = S.cart[id];
