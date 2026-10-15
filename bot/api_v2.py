@@ -26,11 +26,20 @@ log = logging.getLogger("zakas-api")
 # Avtomobillar: max_kg — bitta zakas hajmi chegarasi, min_kg — kamida shuncha bo'lishi shart,
 # weekly — bitta filial haftada faqat 1 marta (admin qo'shimcha bersa bundan tashqari ham mumkin)
 VEHICLES = {
-    "labo": {"name": "Labo", "max_kg": 1000, "min_kg": 0, "weekly": False},
-    "shinaray": {"name": "Shinaray", "max_kg": 2200, "min_kg": 0, "weekly": True},
-    "isuzi": {"name": "Isuzi", "max_kg": 10000, "min_kg": 3000, "weekly": True},
+    "labo": {"name": "Labo", "max_kg": 1000, "min_kg": 0, "weekly": False, "shared": False},
+    "shinaray": {"name": "Shinaray", "max_kg": 2200, "min_kg": 0, "weekly": True, "shared": True},
+    "isuzi": {"name": "Isuzi", "max_kg": 10000, "min_kg": 3000, "weekly": True, "shared": True},
 }
 DONA_KG = 0.4  # 1 dona = 0.4 kg
+
+
+def quota_error(day_used: bool, week_used: bool, taken: bool, has_grant: bool):
+    """Oddiy huquq yetmasa, admin bergan qo'shimcha huquq (grant) kerak. Xato kodi yoki None."""
+    if not (day_used or week_used or taken) or has_grant:
+        return None
+    if taken:
+        return "vehicle_taken"
+    return "daily_limit" if day_used else "weekly_limit"
 
 
 def eq_kg(items) -> float:
@@ -337,6 +346,8 @@ async def h_order(request):
 
     async with db.pool.acquire() as c:
         async with c.transaction():
+            if V["shared"]:  # Shinaray/Isuzi butun tizimda kuniga bitta: bir vaqtda ikki filial olib qo'ymasin
+                await c.execute("select pg_advisory_xact_lock(hashtext($1))", f"veh:{veh}:{d.isoformat()}")
             await c.execute("select pg_advisory_xact_lock($1)", u["id"])  # bir foydalanuvchi — bir vaqtda bitta tekshiruv
             # Oddiy huquq: kuniga 1 ta zakas; Shinaray/Isuzi uchun yana haftada 1 marta
             day_used = (await c.fetchval(
@@ -348,13 +359,19 @@ async def h_order(request):
                 week_used = (await c.fetchval(
                     "select count(*) from orders where user_id=$1 and vehicle=$2 and grant_id is null "
                     "and order_date>=$3 and order_date<$4", u["id"], veh, ws, ws + timedelta(days=7))) > 0
+            taken = False  # boshqa filial shu kunga shu avtoni allaqachon olgan
+            if V["shared"]:
+                taken = (await c.fetchval(
+                    "select count(*) from orders where order_date=$1 and vehicle=$2 and user_id<>$3",
+                    d, veh, u["id"])) > 0
             grant_id = None
-            if day_used or week_used:  # oddiy huquq ishlatilgan — admin bergan qo'shimcha huquq kerak
+            if day_used or week_used or taken:  # oddiy huquq yetmaydi — admin bergan qo'shimcha huquq kerak
                 grant_id = await c.fetchval(
                     "select id from grants where user_id=$1 and vehicle=$2 and used_order_id is null "
                     "order by id limit 1 for update", u["id"], veh)
-                if grant_id is None:
-                    return err("daily_limit" if day_used else "weekly_limit")
+                code = quota_error(day_used, week_used, taken, grant_id is not None)
+                if code:
+                    return err(code)
             oid = await c.fetchval(
                 "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,grant_id) "
                 "values($1,$2,$3::jsonb,$4,$5,$6,$7) returning id",
@@ -368,16 +385,30 @@ async def h_order(request):
 
 
 async def h_vehicles(request):
-    """Avtomobillar sozlamasi + foydalanuvchiga admin bergan ishlatilmagan qo'shimcha huquqlar."""
+    """Avtomobillar sozlamasi, foydalanuvchining qo'shimcha huquqlari va (date berilsa) shu kunga band avtolar."""
+    busy = {}
+    date = request.query.get("date")
+    d = None
+    if date:
+        try:
+            d = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            return err("bad_date")
     async with db.pool.acquire() as c:
         rows = await c.fetch(
             "select vehicle, count(*) as n from grants where user_id=$1 and used_order_id is null group by vehicle",
             request["user"]["id"])
+        if d:
+            shared = [k for k, v in VEHICLES.items() if v["shared"]]
+            for r in await c.fetch(
+                    "select distinct vehicle from orders where order_date=$1 and vehicle = any($2::text[])", d, shared):
+                busy[r["vehicle"]] = True
     return web.json_response({
         "ok": True,
         "vehicles": {k: {"name": v["name"], "max_kg": v["max_kg"], "min_kg": v["min_kg"], "weekly": v["weekly"]}
                      for k, v in VEHICLES.items()},
         "grants": {r["vehicle"]: r["n"] for r in rows},
+        "busy": busy,
     })
 
 
