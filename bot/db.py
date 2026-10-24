@@ -53,6 +53,7 @@ create table if not exists settings(
   value text not null
 );
 alter table orders add column if not exists vehicle text;
+alter table orders add column if not exists vehicle_n integer not null default 1;
 alter table orders add column if not exists grant_id integer;
 create table if not exists grants(
   id serial primary key,
