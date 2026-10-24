@@ -26,10 +26,26 @@ log = logging.getLogger("zakas-api")
 # Avtomobillar: max_kg — bitta zakas hajmi chegarasi, min_kg — kamida shuncha bo'lishi shart,
 # weekly — bitta filial haftada faqat 1 marta (admin qo'shimcha bersa bundan tashqari ham mumkin)
 VEHICLES = {
-    "labo": {"name": "Labo", "max_kg": 1000, "min_kg": 0, "weekly": False, "shared": False},
+    "labo": {"name": "Labo", "max_kg": 2000, "min_kg": 0, "weekly": False, "shared": False},   # 1000 kg × 2 tagacha
     "shinaray": {"name": "Shinaray", "max_kg": 2200, "min_kg": 0, "weekly": True, "shared": True},
-    "isuzi": {"name": "Isuzi", "max_kg": 10000, "min_kg": 3000, "weekly": True, "shared": True},
+    "isuzi": {"name": "Isuzi", "max_kg": 10000, "min_kg": 0, "weekly": False, "shared": True},
 }
+LABO_CAP = 1000   # bitta Labo sig'imi, kg
+MAX_KG = 10000    # bitta zakasning eng katta hajmi
+
+
+def vehicle_ok(veh: str, n: int, eq: float) -> bool:
+    """Zakas hajmiga mos avtomobilmi? (ilovadagi suggest() bilan bir xil qoida)
+    ≤1000 — 1 Labo; ≤2000 — 2 Labo; 2000–2200 — Shinaray yoki Isuzi; 2200–10000 — Isuzi."""
+    if veh == "labo":
+        return n in (1, 2) and eq <= LABO_CAP * n + 1e-6 and (n == 1 or eq > LABO_CAP)
+    if veh == "shinaray":
+        return n == 1 and 2000 < eq <= 2200 + 1e-6
+    if veh == "isuzi":
+        return n == 1 and 2000 < eq <= MAX_KG + 1e-6
+    return False
+
+
 DONA_KG = 0.4  # 1 dona = 0.4 kg
 
 
@@ -307,6 +323,10 @@ async def h_order(request):
     if veh not in VEHICLES:
         return err("bad_vehicle")
     V = VEHICLES[veh]
+    try:
+        veh_n = int(data.get("vehicle_n") or 1)
+    except (TypeError, ValueError):
+        return err("bad_vehicle")
 
     today = datetime.now(TIMEZONE).date()
     try:
@@ -339,10 +359,10 @@ async def h_order(request):
     items.sort(key=lambda x: (prods[x["id"]]["sort"], x["id"]))  # kategoriya va katalog tartibida
 
     eq = eq_kg(items)
-    if eq > V["max_kg"] + 1e-6:
+    if eq > MAX_KG + 1e-6:
         return err("limit_full")
-    if eq < V["min_kg"]:
-        return err("min_kg")
+    if not vehicle_ok(veh, veh_n, eq):  # tanlangan avto zakas hajmiga mos emas
+        return err("vehicle_mismatch")
 
     async with db.pool.acquire() as c:
         async with c.transaction():
@@ -373,42 +393,60 @@ async def h_order(request):
                 if code:
                     return err(code)
             oid = await c.fetchval(
-                "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,grant_id) "
-                "values($1,$2,$3::jsonb,$4,$5,$6,$7) returning id",
-                u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona, veh, grant_id,
+                "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,vehicle_n,grant_id) "
+                "values($1,$2,$3::jsonb,$4,$5,$6,$7,$8) returning id",
+                u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona, veh, veh_n, grant_id,
             )
             if grant_id is not None:
                 await c.execute("update grants set used_order_id=$1 where id=$2", oid, grant_id)
 
-    await notify(order_text(oid, d, V['name'], V['max_kg'], u, items, kg, dona, eq))
+    await notify(order_text(oid, d, V['name'] + (f' ×{veh_n}' if veh_n > 1 else ''), LABO_CAP * veh_n if veh == 'labo' else V['max_kg'], u, items, kg, dona, eq))
     return web.json_response({"ok": True, "order_id": oid})
 
 
+async def vehicle_availability(c, u, d) -> dict:
+    """Har avto uchun shu foydalanuvchi shu kunga zakas bera oladimi: {veh: {"ok": bool, "reason": kod|None}}."""
+    gr = {r["vehicle"]: r["n"] for r in await c.fetch(
+        "select vehicle, count(*) as n from grants where user_id=$1 and used_order_id is null group by vehicle", u["id"])}
+    day_used = (await c.fetchval(
+        "select count(*) from orders where user_id=$1 and order_date=$2 and grant_id is null", u["id"], d)) > 0
+    out = {}
+    for k, V in VEHICLES.items():
+        week_used = False
+        if V["weekly"]:
+            ws = d - timedelta(days=d.weekday())
+            week_used = (await c.fetchval(
+                "select count(*) from orders where user_id=$1 and vehicle=$2 and grant_id is null "
+                "and order_date>=$3 and order_date<$4", u["id"], k, ws, ws + timedelta(days=7))) > 0
+        taken = False
+        if V["shared"]:
+            taken = (await c.fetchval(
+                "select count(*) from orders where order_date=$1 and vehicle=$2 and user_id<>$3",
+                d, k, u["id"])) > 0
+        code = quota_error(day_used, week_used, taken, gr.get(k, 0) > 0)
+        out[k] = {"ok": code is None, "reason": code}
+    return out
+
+
 async def h_vehicles(request):
-    """Avtomobillar sozlamasi, foydalanuvchining qo'shimcha huquqlari va (date berilsa) shu kunga band avtolar."""
-    busy = {}
-    date = request.query.get("date")
+    """Avtomobillar sozlamasi, qo'shimcha huquqlar va (date berilsa) shu kunga har avtoning holati."""
     d = None
-    if date:
+    if request.query.get("date"):
         try:
-            d = datetime.strptime(date, "%Y-%m-%d").date()
+            d = datetime.strptime(request.query["date"], "%Y-%m-%d").date()
         except ValueError:
             return err("bad_date")
     async with db.pool.acquire() as c:
         rows = await c.fetch(
             "select vehicle, count(*) as n from grants where user_id=$1 and used_order_id is null group by vehicle",
             request["user"]["id"])
-        if d:
-            shared = [k for k, v in VEHICLES.items() if v["shared"]]
-            for r in await c.fetch(
-                    "select distinct vehicle from orders where order_date=$1 and vehicle = any($2::text[])", d, shared):
-                busy[r["vehicle"]] = True
+        avail = await vehicle_availability(c, request["user"], d) if d else {}
     return web.json_response({
         "ok": True,
         "vehicles": {k: {"name": v["name"], "max_kg": v["max_kg"], "min_kg": v["min_kg"], "weekly": v["weekly"]}
                      for k, v in VEHICLES.items()},
         "grants": {r["vehicle"]: r["n"] for r in rows},
-        "busy": busy,
+        "avail": avail,
     })
 
 
@@ -433,7 +471,7 @@ async def h_request(request):
 async def h_my_orders(request):
     async with db.pool.acquire() as c:
         rows = await c.fetch(
-            "select id,order_date,created_at,items,total_kg,total_dona,vehicle from orders "
+            "select id,order_date,created_at,items,total_kg,total_dona,vehicle,vehicle_n from orders "
             "where user_id=$1 order by id desc limit 50", request["user"]["id"],
         )
     return web.json_response({"ok": True, "orders": [order_json(r) for r in rows]})
@@ -445,7 +483,7 @@ def order_json(r) -> dict:
         "created_at": r["created_at"].astimezone(TIMEZONE).strftime("%Y-%m-%d %H:%M"),
         "items": json.loads(r["items"]) if isinstance(r["items"], str) else r["items"],
         "total_kg": float(r["total_kg"]), "total_dona": float(r["total_dona"]),
-        "vehicle": r["vehicle"],
+        "vehicle": r["vehicle"], "vehicle_n": r["vehicle_n"],
     }
 
 
@@ -781,7 +819,7 @@ async def h_control(request):
     is_admin = bool(request["user"]["is_admin"])
     async with db.pool.acquire() as c:
         orders = await c.fetch(
-            "select o.id,o.user_id,o.vehicle,o.items,u.name,u.phone from orders o "
+            "select o.id,o.user_id,o.vehicle,o.vehicle_n,o.items,u.name,u.phone from orders o "
             "join users u on u.id=o.user_id where o.order_date=$1 order by o.id", d)
         if is_admin:
             users = await c.fetch("select id,name,phone from users where active order by name")
@@ -801,10 +839,11 @@ async def h_control(request):
         kg = eq_kg(items)
         row = rows.setdefault(o["user_id"], {
             "user_id": o["user_id"], "name": o["name"],
-            **{k: {"kg": 0.0, "n": 0} for k in VEHICLES},
+            **{k: {"kg": 0.0, "n": 0, "cars": 0} for k in VEHICLES},
         })
         row[v]["kg"] = round(row[v]["kg"] + kg, 2)
         row[v]["n"] += 1
+        row[v]["cars"] += o["vehicle_n"] or 1
         totals[v] = round(totals[v] + kg, 2)
     totals["all"] = round(sum(totals.values()), 2)
     out = {"ok": True, "date": d.isoformat(), "rows": list(rows.values()), "totals": totals}
