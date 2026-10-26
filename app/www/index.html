@@ -506,6 +506,12 @@ async function admOrders() {
 
 // ---------------------------------------------------------------- ISHGA TUSHIRISH
 (async function boot() {
+  try { // Jarvis'dan avtomatik kirish: #jt=token&ju=user
+    const hp = new URLSearchParams(location.hash.slice(1));
+    if (hp.get("jt")) { localStorage.setItem("tk", hp.get("jt")); S.token = hp.get("jt");
+      if (hp.get("ju")) { localStorage.setItem("us", hp.get("ju")); S.user = JSON.parse(hp.get("ju")); }
+      history.replaceState(null, "", location.pathname); }
+  } catch (e) {}
   const tg = window.Telegram && window.Telegram.WebApp;
   if (tg && tg.initData) {
     try { tg.ready(); tg.expand(); } catch (e) {}
