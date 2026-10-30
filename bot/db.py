@@ -60,6 +60,7 @@ alter table orders add column if not exists status text not null default 'confir
 alter table orders add column if not exists confirmed_at timestamptz;
 alter table orders add column if not exists asked_vehicle text;
 alter table orders add column if not exists asked_n integer;
+alter table orders add column if not exists vehicles jsonb;  -- tasdiqlangan avtolar: {"labo":1,"shinaray":1}
 create table if not exists grants(
   id serial primary key,
   user_id integer not null references users(id) on delete cascade,
