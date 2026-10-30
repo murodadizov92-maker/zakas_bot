@@ -399,7 +399,7 @@ async function refreshStatus() { try { const r = await api("/products"); S.statu
 async function viewHist() {
   $("#view").innerHTML = `<div class="page"><h2>Tarix</h2><div class="load">Yuklanmoqda…</div></div>`;
   try { const r = await api("/orders");
-    $("#view .page").innerHTML = `<h2>Tarix</h2>` + (r.orders.length ? r.orders.map(o => `<div class="box"><div class="line"><b>#${o.id} · ${o.date.split("-").reverse().join(".")}${o.status !== "pending" && o.vehicle && VEH[o.vehicle] ? " · " + VEH[o.vehicle].name + (o.vehicle_n > 1 ? " ×" + o.vehicle_n : "") : ""}</b><span class="mut">${o.created_at}</span></div>
+    $("#view .page").innerHTML = `<h2>Tarix</h2>` + (r.orders.length ? r.orders.map(o => `<div class="box"><div class="line"><b>#${o.id} · ${o.date.split("-").reverse().join(".")}${o.status !== "pending" && vlabel(o.vehicles) ? " · " + vlabel(o.vehicles) : ""}</b><span class="mut">${o.created_at}</span></div>
       <div class="mut" style="padding:4px 0">${o.status === "pending" ? "⏳ Admin tasdiqlashi kutilmoqda" : "✅ Tasdiqlandi"}</div>
       ${o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")}
       <div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div></div>`).join("") : `<div class="load">Hali buyurtma yo'q</div>`);
@@ -516,27 +516,34 @@ async function admDays() {
     draw();
   } catch (e) { el.innerHTML = `<div class="err">${esc(say(e))}</div>`; }
 }
-// Zakas hajmiga sig'adigan avtomobillar (admin tasdiqlashda tanlaydi). Serverdagi fits() bilan bir xil.
-const fitOpts = eq => { const o = [{ veh: "labo", n: Math.max(1, Math.ceil(eq / LABO - 1e-9)) }];
-  if (eq <= 2200) o.push({ veh: "shinaray", n: 1 }); if (eq <= MAXKG) o.push({ veh: "isuzi", n: 1 }); return o.filter(x => x.n <= 10); };
+// Admin zakasga avtolarni o'zi tanlaydi (masalan 1 Shinaray + 1 Labo). Jami sig'im zakas hajmidan kam bo'lmasligi kerak.
+const CAPV = { labo: LABO, shinaray: 2200, isuzi: MAXKG };
+const VORDER = ["isuzi", "shinaray", "labo"];
 const eqOf = o => r2(o.items.reduce((s, i) => s + (i.unit === "dona" ? i.qty * DONA_KG : i.qty), 0));
 const dmy = s => s.split("-").reverse().join(".");
+const vlabel = vs => VORDER.filter(k => vs && vs[k]).map(k => VEH[k].name + (vs[k] > 1 ? " ×" + vs[k] : "")).join(" + ");
+const capOf = c => VORDER.reduce((s, k) => s + (c[k] || 0) * CAPV[k], 0);
 async function admOrders() {
-  const SEL = {}; let list = [];
+  const CNT = {}; let list = [];   // CNT[orderId] = { labo: n, shinaray: n, isuzi: n }
   const el = $("#ad");
   el.innerHTML = `<div class="tabs"><button class="chip ${S.ordTab !== "date" ? "on" : ""}" data-ot="pending">⏳ Tasdiq kutayotgan</button><button class="chip ${S.ordTab === "date" ? "on" : ""}" data-ot="date">📅 Sana bo'yicha</button></div>
     ${S.ordTab === "date" ? `<input id="od" type="date" class="inp" value="${S.date || ld(new Date())}">` : ""}<div id="ol" class="load">Yuklanmoqda…</div>`;
   const items = o => o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")
     + `<div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div>`;
-  const selOf = (o, opts) => { if (SEL[o.id] === undefined) { const k = opts.findIndex(x => x.veh === o.asked_vehicle && (x.veh !== "labo" || x.n === o.asked_n)); SEL[o.id] = k >= 0 ? k : 0; } return SEL[o.id]; };
+  const cntOf = o => { if (!CNT[o.id]) { const c = { labo: 0, shinaray: 0, isuzi: 0 }; if (o.asked_vehicle && c[o.asked_vehicle] !== undefined) c[o.asked_vehicle] = o.asked_n || 1; CNT[o.id] = c; } return CNT[o.id]; };
   const box = o => {
-    const del = `<button class="btn sm gray" style="margin-top:8px;color:#c00" data-del="${o.id}">🗑 O'chirish</button>`;
-    if (o.status !== "pending") return `<div class="box"><b>#${o.id} · ${esc(o.user)}${o.vehicle && VEH[o.vehicle] ? " · " + VEH[o.vehicle].name + (o.vehicle_n > 1 ? " ×" + o.vehicle_n : "") : ""} ✅</b><div class="mut">${dmy(o.date)} · ${o.created_at}</div>${items(o)}${del}</div>`;
-    const eq = eqOf(o), opts = fitOpts(eq), sel = selOf(o, opts), asked = o.asked_vehicle && VEH[o.asked_vehicle] ? VEH[o.asked_vehicle].name + (o.asked_n > 1 ? " ×" + o.asked_n : "") : "—";
+    const del = `<button class="btn sm gray" style="color:#c00" data-del="${o.id}">🗑 O'chirish</button>`;
+    if (o.status !== "pending") return `<div class="box"><b>#${o.id} · ${esc(o.user)}${vlabel(o.vehicles) ? " · " + vlabel(o.vehicles) : ""} ✅</b><div class="mut">${dmy(o.date)} · ${o.created_at}</div>${items(o)}<div style="margin-top:8px">${del}</div></div>`;
+    const eq = eqOf(o), c = cntOf(o), cap = capOf(c), okc = cap >= eq - 1e-6 && cap > 0, asked = vlabel(o.asked_vehicle ? { [o.asked_vehicle]: o.asked_n || 1 } : null) || "—";
     return `<div class="box" data-id="${o.id}"><b>#${o.id} · ${esc(o.user)}</b><div class="mut">📅 ${dmy(o.date)} · ${o.created_at} · so'ragan avto: ${asked}</div>${items(o)}
       <div class="line"><span>Hajm</span><b>${eq} kg</b></div>
-      ${opts.map((x, i) => { const w = o.warn && o.warn[x.veh]; return `<div class="vopt ${i === sel ? "sel" : ""}" data-o="${o.id}:${i}"><div class="vo-im">${optImgs(x)}</div><div><b>${optName(x)}</b>${w ? `<div class="vo-w">⚠ ${esc(w)}</div>` : ""}</div></div>`; }).join("")}
-      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm" data-ok="${o.id}">✅ Tasdiqlash</button>${del.replace("margin-top:8px;", "")}</div></div>`;
+      <div class="mut" style="margin:8px 0 2px">Avtomobillarni o'zingiz belgilang:</div>
+      ${VORDER.map(k => { const w = c[k] > 0 && o.warn && o.warn[k]; return `<div class="vopt ${c[k] ? "sel" : ""}"><div class="vo-im"><img src="${VEH[k].img}" alt=""></div>
+        <div style="flex:1"><b>${VEH[k].name}</b><div class="mut">${CAPV[k]} kg</div>${w ? `<div class="vo-w">⚠ ${esc(w)}</div>` : ""}</div>
+        <div class="qty" style="width:128px;flex:none"><button data-cm="${o.id}:${k}:-1">−</button><b style="min-width:26px;text-align:center">${c[k]}</b><button data-cm="${o.id}:${k}:1">+</button></div></div>`; }).join("")}
+      <div class="line"><span>Sig'im</span><b style="color:${okc ? "#4ade80" : "#f87171"}">${cap} / ${eq} kg</b></div>
+      ${okc ? "" : `<div class="err" style="min-height:0">${cap ? "Tanlangan avtolar yukni ko'tarmaydi." : "Kamida bitta avto tanlang."}</div>`}
+      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm" data-ok="${o.id}" ${okc ? "" : "disabled"}>✅ Tasdiqlash</button>${del}</div></div>`;
   };
   const draw = () => { $("#ol").className = ""; $("#ol").innerHTML = list.length ? list.map(box).join("") : `<div class="load">${S.ordTab === "date" ? "Bu sanaga buyurtma yo'q" : "Tasdiq kutayotgan zakas yo'q"}</div>`; };
   const load = async () => { try {
@@ -547,13 +554,14 @@ async function admOrders() {
     } catch (e) { $("#ol").className = "err"; $("#ol").textContent = say(e); } };
   el.onclick = async e => {
     const t = e.target.closest("[data-ot]"); if (t) { S.ordTab = t.dataset.ot; return admOrders(); }
-    const op = e.target.closest("[data-o]"); if (op) { const [id, i] = op.dataset.o.split(":"); SEL[id] = +i; return draw(); }
+    const cm = e.target.closest("[data-cm]"); if (cm) { const [id, k, d] = cm.dataset.cm.split(":"), c = CNT[id]; c[k] = Math.max(0, Math.min(10, c[k] + +d)); return draw(); }
     const ok = e.target.closest("[data-ok]");
-    if (ok) { const o = list.find(x => x.id == ok.dataset.ok), opts = fitOpts(eqOf(o)), x = opts[selOf(o, opts)], w = o.warn && o.warn[x.veh];
-      if (w && !confirm(`⚠ ${optName(x)}: ${w}.\nBaribir tasdiqlaysizmi?`)) return;
+    if (ok) { const o = list.find(x => x.id == ok.dataset.ok), c = cntOf(o), chosen = VORDER.filter(k => c[k] > 0);
+      const ws = chosen.filter(k => o.warn && o.warn[k]).map(k => `${VEH[k].name}: ${o.warn[k]}`);
+      if (ws.length && !confirm(`⚠ ${ws.join("\n⚠ ")}\n\nBaribir tasdiqlaysizmi?`)) return;
       ok.disabled = true;
-      try { const r = await api(`/admin/orders/${o.id}/confirm`, { body: { vehicle: x.veh, vehicle_n: x.n } });
-        toast(r.sent ? `✅ ${optName(x)} tasdiqlandi, guruhga yuborildi` : "⚠ Tasdiqlandi, lekin guruhga yuborib bo'lmadi"); load();
+      try { const r = await api(`/admin/orders/${o.id}/confirm`, { body: { vehicles: Object.fromEntries(chosen.map(k => [k, c[k]])) } });
+        toast(r.sent ? `✅ ${vlabel(c)} tasdiqlandi, guruhga yuborildi` : "⚠ Tasdiqlandi, lekin guruhga yuborib bo'lmadi"); load();
       } catch (er) { toast(say(er)); ok.disabled = false; if (er.message === "already_confirmed") load(); }
       return; }
     const b = e.target.closest("[data-del]"); if (!b || !confirm(`#${b.dataset.del} buyurtma o'chirilsinmi?`)) return;
