@@ -34,15 +34,43 @@ LABO_CAP = 1000   # bitta Labo sig'imi, kg
 MAX_KG = 10000    # bitta zakasning eng katta hajmi
 
 
-def fits(veh: str, n: int, eq: float) -> bool:
-    """Admin tasdiqlashida: yuk shu avtomobil(lar)ga sig'adimi? (faqat sig'im tekshiriladi, qolganini admin hal qiladi)"""
-    if veh == "labo":
-        return 1 <= n <= 10 and eq <= LABO_CAP * n + 1e-6
-    if veh == "shinaray":
-        return n == 1 and eq <= VEHICLES["shinaray"]["max_kg"] + 1e-6
-    if veh == "isuzi":
-        return n == 1 and eq <= MAX_KG + 1e-6
-    return False
+CAP = {"labo": LABO_CAP, "shinaray": 2200, "isuzi": MAX_KG}  # bitta avtoning sig'imi, kg
+
+
+def parse_vehicles(raw) -> dict:
+    """{'labo': 1, 'shinaray': 1} ko'rinishidagi tanlovni tozalaydi; noto'g'ri bo'lsa None."""
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for k, v in raw.items():
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        if k not in VEHICLES or n < 0 or n > 10:
+            return None
+        if n:
+            out[k] = n
+    return out if out and sum(out.values()) <= 12 else None
+
+
+def capacity(vs: dict) -> int:
+    return sum(CAP[k] * n for k, n in vs.items())
+
+
+def vs_of(row) -> dict:
+    """Zakasdagi avtolar: yangi 'vehicles' ustuni, bo'lmasa eski vehicle/vehicle_n."""
+    v = row["vehicles"] if "vehicles" in row.keys() else None
+    if isinstance(v, str):
+        v = json.loads(v)
+    if v:
+        return v
+    return {row["vehicle"]: row["vehicle_n"] or 1} if row["vehicle"] in VEHICLES else {}
+
+
+def vs_label(vs: dict) -> str:
+    order = ["isuzi", "shinaray", "labo"]
+    return " + ".join(VEHICLES[k]["name"] + (f" ×{vs[k]}" if vs[k] > 1 else "") for k in order if k in vs)
 
 
 def vehicle_ok(veh: str, n: int, eq: float) -> bool:
@@ -460,7 +488,7 @@ async def h_request(request):
 async def h_my_orders(request):
     async with db.pool.acquire() as c:
         rows = await c.fetch(
-            "select id,order_date,created_at,items,total_kg,total_dona,vehicle,vehicle_n,status,asked_vehicle,asked_n "
+            "select id,order_date,created_at,items,total_kg,total_dona,vehicle,vehicle_n,vehicles,status,asked_vehicle,asked_n "
             "from orders where user_id=$1 order by id desc limit 50", request["user"]["id"],
         )
     return web.json_response({"ok": True, "orders": [order_json(r) for r in rows]})
@@ -474,6 +502,7 @@ def order_json(r) -> dict:
         "total_kg": float(r["total_kg"]), "total_dona": float(r["total_dona"]),
         "vehicle": r["vehicle"], "vehicle_n": r["vehicle_n"],
         "status": r["status"], "asked_vehicle": r["asked_vehicle"], "asked_n": r["asked_n"],
+        "vehicles": vs_of(r),
     }
 
 
@@ -776,18 +805,20 @@ async def pending_warnings(c, rows) -> dict:
     if not pend:
         return {}
     dates = [r["order_date"] for r in pend]
-    conf = await c.fetch(
-        "select o.user_id,o.order_date,o.vehicle,u.name from orders o join users u on u.id=o.user_id "
-        "where o.status='confirmed' and o.vehicle in ('shinaray','isuzi') and o.order_date between $1 and $2",
+    conf_rows = await c.fetch(
+        "select o.user_id,o.order_date,o.vehicle,o.vehicle_n,o.vehicles,u.name from orders o join users u on u.id=o.user_id "
+        "where o.status='confirmed' and o.order_date between $1 and $2",
         min(dates) - timedelta(days=6), max(dates) + timedelta(days=6))
+    conf = [{**dict(k), "vs": vs_of(k)} for k in conf_rows]
     out = {}
     for r in pend:
         ws = r["order_date"] - timedelta(days=r["order_date"].weekday())
         w: dict[str, list] = {}
         for k in conf:
-            if k["order_date"] == r["order_date"] and k["user_id"] != r["user_id"]:
-                w.setdefault(k["vehicle"], []).append(f"shu kunga {k['name']} filialiga tasdiqlangan")
-            if (k["vehicle"] == "shinaray" and k["user_id"] == r["user_id"]
+            for veh in k["vs"]:
+                if veh in ("shinaray", "isuzi") and k["order_date"] == r["order_date"] and k["user_id"] != r["user_id"]:
+                    w.setdefault(veh, []).append(f"shu kunga {k['name']} filialiga tasdiqlangan")
+            if ("shinaray" in k["vs"] and k["user_id"] == r["user_id"]
                     and ws <= k["order_date"] < ws + timedelta(days=7)):
                 w.setdefault("shinaray", []).append("bu filialga shu haftada Shinaray tasdiqlangan (haftada 1 marta)")
         if w:
@@ -824,15 +855,13 @@ async def h_admin_orders(request):
 
 
 async def h_order_confirm(request):
-    """Admin zakasga avto tanlab tasdiqlaydi — shundan keyingina zakas guruhga boradi."""
+    """Admin zakasga avto(lar)ni tanlab tasdiqlaydi (masalan 1 Shinaray + 1 Labo) — shundan keyingina guruhga boradi."""
     oid = int(request.match_info["id"])
     data = await request.json()
-    veh = data.get("vehicle")
-    if veh not in VEHICLES:
-        return err("bad_vehicle")
-    try:
-        n = int(data.get("vehicle_n") or 1)
-    except (TypeError, ValueError):
+    vs = parse_vehicles(data.get("vehicles"))
+    if vs is None and data.get("vehicle") in VEHICLES:  # eski ko'rinish: bitta avto
+        vs = parse_vehicles({data["vehicle"]: data.get("vehicle_n") or 1})
+    if not vs:
         return err("bad_vehicle")
     async with db.pool.acquire() as c:
         r = await c.fetchrow(
@@ -844,16 +873,16 @@ async def h_order_confirm(request):
             return err("already_confirmed", 409)
         items = json.loads(r["items"]) if isinstance(r["items"], str) else r["items"]
         eq = eq_kg(items)
-        if not fits(veh, n, eq):
+        if capacity(vs) + 1e-6 < eq:  # tanlangan avtolar yukni ko'tarmaydi
             return err("vehicle_mismatch")
+        main = max(vs, key=lambda k: CAP[k] * vs[k])  # eski maydonlar (vehicle/vehicle_n) uchun asosiy avto
         upd = await c.fetchval(
-            "update orders set vehicle=$1, vehicle_n=$2, status='confirmed', confirmed_at=now() "
-            "where id=$3 and status='pending' returning id", veh, n, oid)
+            "update orders set vehicle=$1, vehicle_n=$2, vehicles=$3::jsonb, status='confirmed', confirmed_at=now() "
+            "where id=$4 and status='pending' returning id", main, vs[main], json.dumps(vs), oid)
         if not upd:
             return err("already_confirmed", 409)
-    V = VEHICLES[veh]
     sent = await notify(order_text(
-        oid, r["order_date"], V["name"] + (f" ×{n}" if n > 1 else ""), LABO_CAP * n if veh == "labo" else V["max_kg"],
+        oid, r["order_date"], vs_label(vs), capacity(vs),
         {"name": r["uname"], "phone": r["uphone"]}, items, float(r["total_kg"]), float(r["total_dona"]), eq))
     return web.json_response({"ok": True, "sent": sent})
 
@@ -878,7 +907,7 @@ async def h_control(request):
     is_admin = bool(request["user"]["is_admin"])
     async with db.pool.acquire() as c:
         orders = await c.fetch(
-            "select o.id,o.user_id,o.vehicle,o.vehicle_n,o.items,u.name,u.phone from orders o "
+            "select o.id,o.user_id,o.vehicle,o.vehicle_n,o.vehicles,o.items,u.name,u.phone from orders o "
             "join users u on u.id=o.user_id where o.order_date=$1 and o.status='confirmed' order by o.id", d)
         if is_admin:
             users = await c.fetch("select id,name,phone from users where active order by name")
@@ -891,19 +920,22 @@ async def h_control(request):
     rows: dict[int, dict] = {}
     totals = {k: 0.0 for k in VEHICLES}
     for o in orders:
-        v = o["vehicle"]
-        if v not in VEHICLES:
+        vs = {k: n for k, n in vs_of(o).items() if k in VEHICLES}
+        if not vs:
             continue  # eski (avtosiz) buyurtmalar «Buyurtmalar» bo'limida ko'rinadi
         items = json.loads(o["items"]) if isinstance(o["items"], str) else o["items"]
         kg = eq_kg(items)
+        cap = capacity(vs)
         row = rows.setdefault(o["user_id"], {
             "user_id": o["user_id"], "name": o["name"],
             **{k: {"kg": 0.0, "n": 0, "cars": 0} for k in VEHICLES},
         })
-        row[v]["kg"] = round(row[v]["kg"] + kg, 2)
-        row[v]["n"] += 1
-        row[v]["cars"] += o["vehicle_n"] or 1
-        totals[v] = round(totals[v] + kg, 2)
+        for v, n in vs.items():  # aralash zakasda kg avtolar sig'imiga mutanosib taqsimlanadi
+            part = round(kg * CAP[v] * n / cap, 2) if len(vs) > 1 else kg
+            row[v]["kg"] = round(row[v]["kg"] + part, 2)
+            row[v]["n"] += 1
+            row[v]["cars"] += n
+            totals[v] = round(totals[v] + part, 2)
     totals["all"] = round(sum(totals.values()), 2)
     out = {"ok": True, "date": d.isoformat(), "rows": list(rows.values()), "totals": totals}
     if is_admin:
