@@ -34,6 +34,17 @@ LABO_CAP = 1000   # bitta Labo sig'imi, kg
 MAX_KG = 10000    # bitta zakasning eng katta hajmi
 
 
+def fits(veh: str, n: int, eq: float) -> bool:
+    """Admin tasdiqlashida: yuk shu avtomobil(lar)ga sig'adimi? (faqat sig'im tekshiriladi, qolganini admin hal qiladi)"""
+    if veh == "labo":
+        return 1 <= n <= 10 and eq <= LABO_CAP * n + 1e-6
+    if veh == "shinaray":
+        return n == 1 and eq <= VEHICLES["shinaray"]["max_kg"] + 1e-6
+    if veh == "isuzi":
+        return n == 1 and eq <= MAX_KG + 1e-6
+    return False
+
+
 def vehicle_ok(veh: str, n: int, eq: float) -> bool:
     """Zakas hajmiga mos avtomobilmi? (ilovadagi suggest() bilan bir xil qoida)
     ≤1000 — 1 Labo; ≤2000 — 2 Labo; 2000–2200 — Shinaray yoki Isuzi; 2200–10000 — Isuzi."""
@@ -90,15 +101,19 @@ def chunks(text: str, n: int = 3800) -> list:
     return out
 
 
-async def notify(text: str):
+async def notify(text: str) -> int:
+    """Matnni chatlarga yuboradi. Muvaffaqiyatli yuborilgan xabarlar soni qaytadi."""
+    sent = 0
     if not BOT:
-        return
+        return sent
     for cid in chat_ids():
         for part in chunks(text):
             try:
                 await BOT.send_message(cid, part, parse_mode="HTML")
+                sent += 1
             except Exception as e:
                 log.warning("Telegramga (%s) yuborib bo'lmadi: %s", cid, e)
+    return sent
 
 
 def short_name(name: str) -> str:
@@ -300,16 +315,19 @@ async def h_me(request):
 
 # ------------------------------------------------------------------ katalog va buyurtma
 async def h_products(request):
+    extra = {}
     async with db.pool.acquire() as c:
         rows = await c.fetch(
             "select id,name,price,category,image_url from products where active order by sort,id"
         )
+        if request["user"]["is_admin"]:  # tasdiq kutayotgan zakaslar soni (Sozlamalar belgisi uchun)
+            extra["pending"] = await c.fetchval("select count(*) from orders where status='pending'")
     catalog: dict[str, list] = {}
     for r in rows:
         catalog.setdefault(r["category"], []).append(
             {"id": r["id"], "name": r["name"], "price": r["price"], "image": r["image_url"]}
         )
-    return web.json_response({"ok": True, "catalog": catalog, **(await order_status())})
+    return web.json_response({"ok": True, "catalog": catalog, **extra, **(await order_status())})
 
 
 async def h_order(request):
@@ -364,44 +382,15 @@ async def h_order(request):
     if not vehicle_ok(veh, veh_n, eq):  # tanlangan avto zakas hajmiga mos emas
         return err("vehicle_mismatch")
 
+    # Foydalanuvchi cheklovsiz zakas bera oladi: avtoni admin «Buyurtmalar» bo'limida tanlab tasdiqlaydi.
+    # Zakas guruhga FAQAT tasdiqlangandan keyin boradi (h_order_confirm). Tanlangan avto — shunchaki so'rov.
     async with db.pool.acquire() as c:
-        async with c.transaction():
-            if V["shared"]:  # Shinaray/Isuzi butun tizimda kuniga bitta: bir vaqtda ikki filial olib qo'ymasin
-                await c.execute("select pg_advisory_xact_lock(hashtext($1))", f"veh:{veh}:{d.isoformat()}")
-            await c.execute("select pg_advisory_xact_lock($1)", u["id"])  # bir foydalanuvchi — bir vaqtda bitta tekshiruv
-            # Oddiy huquq: kuniga 1 ta zakas; Shinaray/Isuzi uchun yana haftada 1 marta
-            day_used = (await c.fetchval(
-                "select count(*) from orders where user_id=$1 and order_date=$2 and grant_id is null",
-                u["id"], d)) > 0
-            week_used = False
-            if V["weekly"]:
-                ws = d - timedelta(days=d.weekday())
-                week_used = (await c.fetchval(
-                    "select count(*) from orders where user_id=$1 and vehicle=$2 and grant_id is null "
-                    "and order_date>=$3 and order_date<$4", u["id"], veh, ws, ws + timedelta(days=7))) > 0
-            taken = False  # boshqa filial shu kunga shu avtoni allaqachon olgan
-            if V["shared"]:
-                taken = (await c.fetchval(
-                    "select count(*) from orders where order_date=$1 and vehicle=$2 and user_id<>$3",
-                    d, veh, u["id"])) > 0
-            grant_id = None
-            if day_used or week_used or taken:  # oddiy huquq yetmaydi — admin bergan qo'shimcha huquq kerak
-                grant_id = await c.fetchval(
-                    "select id from grants where user_id=$1 and vehicle=$2 and used_order_id is null "
-                    "order by id limit 1 for update", u["id"], veh)
-                code = quota_error(day_used, week_used, taken, grant_id is not None)
-                if code:
-                    return err(code)
-            oid = await c.fetchval(
-                "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,vehicle_n,grant_id) "
-                "values($1,$2,$3::jsonb,$4,$5,$6,$7,$8) returning id",
-                u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona, veh, veh_n, grant_id,
-            )
-            if grant_id is not None:
-                await c.execute("update grants set used_order_id=$1 where id=$2", oid, grant_id)
-
-    await notify(order_text(oid, d, V['name'] + (f' ×{veh_n}' if veh_n > 1 else ''), LABO_CAP * veh_n if veh == 'labo' else V['max_kg'], u, items, kg, dona, eq))
-    return web.json_response({"ok": True, "order_id": oid})
+        oid = await c.fetchval(
+            "insert into orders(user_id,order_date,items,total_kg,total_dona,vehicle,vehicle_n,status,asked_vehicle,asked_n) "
+            "values($1,$2,$3::jsonb,$4,$5,$6,$7,'pending',$6,$7) returning id",
+            u["id"], d, json.dumps(items, ensure_ascii=False), kg, dona, veh, veh_n,
+        )
+    return web.json_response({"ok": True, "order_id": oid, "status": "pending"})
 
 
 async def vehicle_availability(c, u, d) -> dict:
@@ -471,8 +460,8 @@ async def h_request(request):
 async def h_my_orders(request):
     async with db.pool.acquire() as c:
         rows = await c.fetch(
-            "select id,order_date,created_at,items,total_kg,total_dona,vehicle,vehicle_n from orders "
-            "where user_id=$1 order by id desc limit 50", request["user"]["id"],
+            "select id,order_date,created_at,items,total_kg,total_dona,vehicle,vehicle_n,status,asked_vehicle,asked_n "
+            "from orders where user_id=$1 order by id desc limit 50", request["user"]["id"],
         )
     return web.json_response({"ok": True, "orders": [order_json(r) for r in rows]})
 
@@ -484,6 +473,7 @@ def order_json(r) -> dict:
         "items": json.loads(r["items"]) if isinstance(r["items"], str) else r["items"],
         "total_kg": float(r["total_kg"]), "total_dona": float(r["total_dona"]),
         "vehicle": r["vehicle"], "vehicle_n": r["vehicle_n"],
+        "status": r["status"], "asked_vehicle": r["asked_vehicle"], "asked_n": r["asked_n"],
     }
 
 
@@ -779,24 +769,93 @@ async def h_settings_set(request):
     return web.json_response({"ok": True, **(await order_status())})
 
 
+async def pending_warnings(c, rows) -> dict:
+    """Tasdiq kutayotgan zakaslar uchun ogohlantirishlar {order_id: {avto: matn}}: Shinaray/Isuzi shu kunga boshqa
+    filialga tasdiqlangan bo'lsa yoki Shinaray shu haftada shu filialga tasdiqlangan bo'lsa. Admin baribir tanlay oladi."""
+    pend = [r for r in rows if r["status"] == "pending"]
+    if not pend:
+        return {}
+    dates = [r["order_date"] for r in pend]
+    conf = await c.fetch(
+        "select o.user_id,o.order_date,o.vehicle,u.name from orders o join users u on u.id=o.user_id "
+        "where o.status='confirmed' and o.vehicle in ('shinaray','isuzi') and o.order_date between $1 and $2",
+        min(dates) - timedelta(days=6), max(dates) + timedelta(days=6))
+    out = {}
+    for r in pend:
+        ws = r["order_date"] - timedelta(days=r["order_date"].weekday())
+        w: dict[str, list] = {}
+        for k in conf:
+            if k["order_date"] == r["order_date"] and k["user_id"] != r["user_id"]:
+                w.setdefault(k["vehicle"], []).append(f"shu kunga {k['name']} filialiga tasdiqlangan")
+            if (k["vehicle"] == "shinaray" and k["user_id"] == r["user_id"]
+                    and ws <= k["order_date"] < ws + timedelta(days=7)):
+                w.setdefault("shinaray", []).append("bu filialga shu haftada Shinaray tasdiqlangan (haftada 1 marta)")
+        if w:
+            out[r["id"]] = {veh: "; ".join(msgs) for veh, msgs in w.items()}
+    return out
+
+
 async def h_admin_orders(request):
     date = request.query.get("date")
-    d = None
+    status = request.query.get("status")
+    where, args = [], []
     if date:
         try:
-            d = datetime.strptime(date, "%Y-%m-%d").date()  # asyncpg $1::date ga str emas, date kerak
+            args.append(datetime.strptime(date, "%Y-%m-%d").date())  # asyncpg date kutadi, str emas
         except ValueError:
             return err("bad_date")
+        where.append(f"o.order_date=${len(args)}")
+    if status in ("pending", "confirmed"):
+        args.append(status)
+        where.append(f"o.status=${len(args)}")
     q = ("select o.*, u.name as uname, u.phone as uphone from orders o join users u on u.id=o.user_id "
-         + ("where o.order_date=$1 " if d else "") + "order by o.id desc limit 200")
+         + ("where " + " and ".join(where) + " " if where else "")
+         + ("order by o.order_date, o.id " if status == "pending" else "order by o.id desc ") + "limit 200")
     async with db.pool.acquire() as c:
-        rows = await c.fetch(q, *([d] if d else []))
+        rows = await c.fetch(q, *args)
+        warn = await pending_warnings(c, rows)
     out = []
     for r in rows:
         x = order_json(r)
         x["user"] = f"{r['uname']} (+998{r['uphone']})"
+        x["warn"] = warn.get(r["id"], {})
         out.append(x)
     return web.json_response({"ok": True, "orders": out})
+
+
+async def h_order_confirm(request):
+    """Admin zakasga avto tanlab tasdiqlaydi — shundan keyingina zakas guruhga boradi."""
+    oid = int(request.match_info["id"])
+    data = await request.json()
+    veh = data.get("vehicle")
+    if veh not in VEHICLES:
+        return err("bad_vehicle")
+    try:
+        n = int(data.get("vehicle_n") or 1)
+    except (TypeError, ValueError):
+        return err("bad_vehicle")
+    async with db.pool.acquire() as c:
+        r = await c.fetchrow(
+            "select o.*, u.name as uname, u.phone as uphone from orders o join users u on u.id=o.user_id "
+            "where o.id=$1", oid)
+        if not r:
+            return err("not_found", 404)
+        if r["status"] != "pending":
+            return err("already_confirmed", 409)
+        items = json.loads(r["items"]) if isinstance(r["items"], str) else r["items"]
+        eq = eq_kg(items)
+        if not fits(veh, n, eq):
+            return err("vehicle_mismatch")
+        upd = await c.fetchval(
+            "update orders set vehicle=$1, vehicle_n=$2, status='confirmed', confirmed_at=now() "
+            "where id=$3 and status='pending' returning id", veh, n, oid)
+        if not upd:
+            return err("already_confirmed", 409)
+    V = VEHICLES[veh]
+    sent = await notify(order_text(
+        oid, r["order_date"], V["name"] + (f" ×{n}" if n > 1 else ""), LABO_CAP * n if veh == "labo" else V["max_kg"],
+        {"name": r["uname"], "phone": r["uphone"]}, items, float(r["total_kg"]), float(r["total_dona"]), eq))
+    return web.json_response({"ok": True, "sent": sent})
 
 
 async def h_order_del(request):
@@ -820,7 +879,7 @@ async def h_control(request):
     async with db.pool.acquire() as c:
         orders = await c.fetch(
             "select o.id,o.user_id,o.vehicle,o.vehicle_n,o.items,u.name,u.phone from orders o "
-            "join users u on u.id=o.user_id where o.order_date=$1 order by o.id", d)
+            "join users u on u.id=o.user_id where o.order_date=$1 and o.status='confirmed' order by o.id", d)
         if is_admin:
             users = await c.fetch("select id,name,phone from users where active order by name")
             grants = await c.fetch(
@@ -925,6 +984,7 @@ def add_routes(app: web.Application):
     r.add_get("/api/v2/vehicles", h_vehicles)
     r.add_post("/api/v2/request", h_request)
     r.add_get("/api/v2/control", h_control)
+    r.add_post("/api/v2/admin/orders/{id}/confirm", h_order_confirm)
     r.add_delete("/api/v2/admin/orders/{id}", h_order_del)
     r.add_post("/api/v2/admin/grants", h_grant_add)
     r.add_delete("/api/v2/admin/grants/{id}", h_grant_del)
