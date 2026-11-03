@@ -121,7 +121,7 @@ const ERR = {
   daily_limit: "Bu kunga zakas berib bo'lgansiz. Yana kerak bo'lsa ＋ tugmasi orqali adminga yozing.",
   weekly_limit: "Bu avtomobil shu haftada ishlatilgan (haftada 1 marta). ＋ tugmasi orqali adminga yozing.",
   empty_text: "Xabar yozing.", vehicle_taken: "Bu kunga bu avtomobilga boshqa filial buyurtma bergan. ＋ tugmasi orqali adminga yozing.", day_closed: "Bu kunga zakas qabul qilinmaydi.",
-  vehicle_mismatch: "Bu avtomobilga yuk sig'maydi.", already_confirmed: "Bu zakas allaqachon tasdiqlangan.", not_found: "Zakas topilmadi."
+  vehicle_mismatch: "Bu avtomobilga yuk sig'maydi.", already_confirmed: "Bu zakas allaqachon tasdiqlangan.", not_confirmed: "Bu zakas hali tasdiqlanmagan.", not_found: "Zakas topilmadi."
 };
 const WD = ["Ya","Du","Se","Cho","Pa","Ju","Sh"];
 const $ = (s, r = document) => r.querySelector(s);
@@ -530,20 +530,28 @@ async function admOrders() {
     ${S.ordTab === "date" ? `<input id="od" type="date" class="inp" value="${S.date || ld(new Date())}">` : ""}<div id="ol" class="load">Yuklanmoqda…</div>`;
   const items = o => o.items.map(i => `<div class="line"><span>${esc(clean(i.name))}</span><span>${i.qty} ${i.unit}</span></div>`).join("")
     + `<div class="line"><b>Jami</b><b>${o.total_kg ? o.total_kg + " kg " : ""}${o.total_dona ? o.total_dona + " dona" : ""}</b></div>`;
-  const cntOf = o => { if (!CNT[o.id]) { const c = { labo: 0, shinaray: 0, isuzi: 0 }; if (o.asked_vehicle && c[o.asked_vehicle] !== undefined) c[o.asked_vehicle] = o.asked_n || 1; CNT[o.id] = c; } return CNT[o.id]; };
+  const EDIT = {};   // EDIT[orderId] = true — tasdiqlangan zakasning avtosi tahrirlanmoqda
+  const cntOf = o => { if (!CNT[o.id]) { const c = { labo: 0, shinaray: 0, isuzi: 0 };
+      if (o.status === "confirmed") VORDER.forEach(k => { c[k] = (o.vehicles && o.vehicles[k]) || 0; });
+      else if (o.asked_vehicle && c[o.asked_vehicle] !== undefined) c[o.asked_vehicle] = o.asked_n || 1;
+      CNT[o.id] = c; } return CNT[o.id]; };
   const box = o => {
     const del = `<button class="btn sm gray" style="color:#c00" data-del="${o.id}">🗑 O'chirish</button>`;
-    if (o.status !== "pending") return `<div class="box"><b>#${o.id} · ${esc(o.user)}${vlabel(o.vehicles) ? " · " + vlabel(o.vehicles) : ""} ✅</b><div class="mut">${dmy(o.date)} · ${o.created_at}</div>${items(o)}<div style="margin-top:8px">${del}</div></div>`;
+    const editing = o.status === "confirmed" && EDIT[o.id];
+    if (o.status !== "pending" && !editing) return `<div class="box"><b>#${o.id} · ${esc(o.user)}${vlabel(o.vehicles) ? " · " + vlabel(o.vehicles) : ""} ✅</b><div class="mut">${dmy(o.date)} · ${o.created_at}</div>${items(o)}<div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm" data-ed="${o.id}">✏️ Avtoni o'zgartirish</button>${del}</div></div>`;
     const eq = eqOf(o), c = cntOf(o), cap = capOf(c), okc = cap >= eq - 1e-6 && cap > 0, asked = vlabel(o.asked_vehicle ? { [o.asked_vehicle]: o.asked_n || 1 } : null) || "—";
-    return `<div class="box" data-id="${o.id}"><b>#${o.id} · ${esc(o.user)}</b><div class="mut">📅 ${dmy(o.date)} · ${o.created_at} · so'ragan avto: ${asked}</div>${items(o)}
+    const btns = editing
+      ? `<button class="btn sm" data-sv="${o.id}" ${okc ? "" : "disabled"}>💾 Saqlash</button><button class="btn sm gray" data-ec="${o.id}">Bekor qilish</button>`
+      : `<button class="btn sm" data-ok="${o.id}" ${okc ? "" : "disabled"}>✅ Tasdiqlash</button>${del}`;
+    return `<div class="box" data-id="${o.id}"><b>#${o.id} · ${esc(o.user)}${editing ? " ✅" : ""}</b><div class="mut">📅 ${dmy(o.date)} · ${o.created_at} · ${editing ? "hozirgi avto: " + (vlabel(o.vehicles) || "—") : "so'ragan avto: " + asked}</div>${items(o)}
       <div class="line"><span>Hajm</span><b>${eq} kg</b></div>
-      <div class="mut" style="margin:8px 0 2px">Avtomobillarni o'zingiz belgilang:</div>
+      <div class="mut" style="margin:8px 0 2px">${editing ? "Yangi avtomobillarni belgilang:" : "Avtomobillarni o'zingiz belgilang:"}</div>
       ${VORDER.map(k => { const w = c[k] > 0 && o.warn && o.warn[k]; return `<div class="vopt ${c[k] ? "sel" : ""}"><div class="vo-im"><img src="${VEH[k].img}" alt=""></div>
         <div style="flex:1"><b>${VEH[k].name}</b><div class="mut">${CAPV[k]} kg</div>${w ? `<div class="vo-w">⚠ ${esc(w)}</div>` : ""}</div>
         <div class="qty" style="width:128px;flex:none"><button data-cm="${o.id}:${k}:-1">−</button><b style="min-width:26px;text-align:center">${c[k]}</b><button data-cm="${o.id}:${k}:1">+</button></div></div>`; }).join("")}
       <div class="line"><span>Sig'im</span><b style="color:${okc ? "#4ade80" : "#f87171"}">${cap} / ${eq} kg</b></div>
       ${okc ? "" : `<div class="err" style="min-height:0">${cap ? "Tanlangan avtolar yukni ko'tarmaydi." : "Kamida bitta avto tanlang."}</div>`}
-      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn sm" data-ok="${o.id}" ${okc ? "" : "disabled"}>✅ Tasdiqlash</button>${del}</div></div>`;
+      <div style="display:flex;gap:8px;margin-top:8px">${btns}</div></div>`;
   };
   const draw = () => { $("#ol").className = ""; $("#ol").innerHTML = list.length ? list.map(box).join("") : `<div class="load">${S.ordTab === "date" ? "Bu sanaga buyurtma yo'q" : "Tasdiq kutayotgan zakas yo'q"}</div>`; };
   const load = async () => { try {
@@ -555,6 +563,18 @@ async function admOrders() {
   el.onclick = async e => {
     const t = e.target.closest("[data-ot]"); if (t) { S.ordTab = t.dataset.ot; return admOrders(); }
     const cm = e.target.closest("[data-cm]"); if (cm) { const [id, k, d] = cm.dataset.cm.split(":"), c = CNT[id]; c[k] = Math.max(0, Math.min(10, c[k] + +d)); return draw(); }
+    const ed = e.target.closest("[data-ed]"); if (ed) { EDIT[ed.dataset.ed] = true; delete CNT[ed.dataset.ed]; return draw(); }
+    const ec = e.target.closest("[data-ec]"); if (ec) { delete EDIT[ec.dataset.ec]; delete CNT[ec.dataset.ec]; return draw(); }
+    const sv = e.target.closest("[data-sv]");
+    if (sv) { const o = list.find(x => x.id == sv.dataset.sv), c = cntOf(o), chosen = VORDER.filter(k => c[k] > 0);
+      if (vlabel(o.vehicles) === vlabel(c)) { delete EDIT[o.id]; delete CNT[o.id]; return draw(); }   // o'zgarish yo'q
+      if (!confirm(`#${o.id}: ${vlabel(o.vehicles) || "—"} → ${vlabel(c)}\n\nAvto almashtirilsin va guruhga xabar yuborilsinmi?`)) return;
+      sv.disabled = true;
+      try { const r = await api(`/admin/orders/${o.id}/vehicles`, { body: { vehicles: Object.fromEntries(chosen.map(k => [k, c[k]])) } });
+        delete EDIT[o.id]; delete CNT[o.id];
+        toast(r.sent ? `✅ Avto ${vlabel(c)} ga almashtirildi, guruhga xabar yuborildi` : "⚠ Almashtirildi, lekin guruhga yuborib bo'lmadi"); load();
+      } catch (er) { toast(say(er)); sv.disabled = false; }
+      return; }
     const ok = e.target.closest("[data-ok]");
     if (ok) { const o = list.find(x => x.id == ok.dataset.ok), c = cntOf(o), chosen = VORDER.filter(k => c[k] > 0);
       const ws = chosen.filter(k => o.warn && o.warn[k]).map(k => `${VEH[k].name}: ${o.warn[k]}`);
