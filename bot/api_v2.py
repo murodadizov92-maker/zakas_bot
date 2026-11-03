@@ -297,8 +297,8 @@ async def h_login(request):
     code = str(data.get("code") or "").strip()
 
     now = time.time()
-    FAILS[phone] = [t for t in FAILS.get(phone, []) if now - t < 600]
-    if len(FAILS[phone]) >= 5:
+    FAILS[phone] = [t for t in FAILS.get(phone, []) if now - t < 60]   # 1 daqiqada 20 tadan ko'p xato bo'lsagina to'xtatadi
+    if len(FAILS[phone]) >= 20:
         return err("too_many_attempts", 429)
 
     async with db.pool.acquire() as c:
