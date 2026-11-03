@@ -887,6 +887,41 @@ async def h_order_confirm(request):
     return web.json_response({"ok": True, "sent": sent})
 
 
+async def h_order_vehicles(request):
+    """Admin ALLAQACHON tasdiqlangan zakasning avtolarini almashtiradi; o'zgarish guruhga xabar bo'lib boradi."""
+    oid = int(request.match_info["id"])
+    data = await request.json()
+    vs = parse_vehicles(data.get("vehicles"))
+    if not vs:
+        return err("bad_vehicle")
+    async with db.pool.acquire() as c:
+        r = await c.fetchrow(
+            "select o.*, u.name as uname, u.phone as uphone from orders o join users u on u.id=o.user_id "
+            "where o.id=$1", oid)
+        if not r:
+            return err("not_found", 404)
+        if r["status"] != "confirmed":
+            return err("not_confirmed", 409)
+        items = json.loads(r["items"]) if isinstance(r["items"], str) else r["items"]
+        eq = eq_kg(items)
+        if capacity(vs) + 1e-6 < eq:
+            return err("vehicle_mismatch")
+        old = {k: n for k, n in vs_of(r).items() if k in VEHICLES}
+        main = max(vs, key=lambda k: CAP[k] * vs[k])
+        await c.execute(
+            "update orders set vehicle=$1, vehicle_n=$2, vehicles=$3::jsonb where id=$4",
+            main, vs[main], json.dumps(vs), oid)
+    if old == vs:
+        return web.json_response({"ok": True, "sent": 0, "changed": False})
+    sent = await notify(
+        f"♻️ <b>Buyurtma #{oid} avtosi o'zgartirildi</b>\n"
+        f"📅 Sana: {r['order_date'].strftime('%d.%m.%Y')}\n"
+        f"👤 {html.escape(r['uname'])} (+998{r['uphone']})\n"
+        f"🚚 Eski avto: {vs_label(old) if old else '—'}\n"
+        f"🚚 <b>Yangi avto: {vs_label(vs)}</b> (sig'im {capacity(vs)} kg, yuk ≈ {eq:g} kg)")
+    return web.json_response({"ok": True, "sent": sent, "changed": True})
+
+
 async def h_order_del(request):
     oid = int(request.match_info["id"])
     async with db.pool.acquire() as c:
@@ -1017,6 +1052,7 @@ def add_routes(app: web.Application):
     r.add_post("/api/v2/request", h_request)
     r.add_get("/api/v2/control", h_control)
     r.add_post("/api/v2/admin/orders/{id}/confirm", h_order_confirm)
+    r.add_post("/api/v2/admin/orders/{id}/vehicles", h_order_vehicles)
     r.add_delete("/api/v2/admin/orders/{id}", h_order_del)
     r.add_post("/api/v2/admin/grants", h_grant_add)
     r.add_delete("/api/v2/admin/grants/{id}", h_grant_del)
