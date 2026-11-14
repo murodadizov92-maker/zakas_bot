@@ -215,6 +215,15 @@ body{padding-left:108px}
 .fab{right:36px;bottom:34px;width:64px;height:64px}
 .toast{bottom:34px;left:calc(50% + 54px)}
 .ov{padding-left:124px}
+/* tezlik: og'ir effektlar o'chiriladi (katta ekranda qotishga sabab bo'lgan) */
+#aurora{display:none!important}
+body{background:radial-gradient(900px 520px at 12% -6%,#2a1357 0,transparent 62%),radial-gradient(800px 520px at 100% 102%,#3a0b26 0,transparent 62%),#0c0a14!important;background-attachment:scroll!important}
+*,*::before,*::after{animation:none!important}
+.nav{backdrop-filter:none!important;-webkit-backdrop-filter:none!important;background:#110e1c!important}
+.hdr::after,.btn::after,#topbar::before{display:none!important}
+.card,.box{box-shadow:none!important}
+.card:hover{box-shadow:0 14px 30px -14px rgba(0,0,0,.7)!important}
+.img{background-attachment:scroll}
 }
 @media (min-width:1700px){.grid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}}
 </style>
